@@ -1,0 +1,30 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        - NEXT_PUBLIC_BASE_PATH=${BASE_PATH:-}
+    ports:
+      - "3001:3001"
+    environment:
+      - BASE_PATH=${BASE_PATH:-}
+      - IMAP_HOST=${IMAP_HOST:-mail.example.com}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - SMTP_HOST=${SMTP_HOST:-mail.example.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - TLS_ENABLED=${TLS_ENABLED:-true}
+      - RUST_LOG=${RUST_LOG:-info,tantivy=warn,async_imap=warn}
+      - SESSION_TIMEOUT_HOURS=${SESSION_TIMEOUT_HOURS:-24}
+      - WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID:-}
+      - WEBAUTHN_RP_ORIGIN=${WEBAUTHN_RP_ORIGIN:-}
+    volumes:
+      - rav-data:/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:3001${BASE_PATH:-}/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  rav-data:
