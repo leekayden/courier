@@ -1,0 +1,642 @@
+use std::sync::Arc;
+
+use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
+use serde::{Deserialize, Serialize};
+
+use crate::auth::session::SessionState;
+use crate::db;
+use crate::error::AppError;
+use crate::folder_cipher::FolderId;
+use crate::search::engine::{SearchEngine, SearchQuery};
+
+// ---------------------------------------------------------------------------
+// Search query parser
+// ---------------------------------------------------------------------------
+
+/// Intermediate result of parsing structured operators out of a query string.
+struct ParsedQuery {
+    text: String,
+    subject_only: Option<String>,
+    folder: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    date_from: Option<i64>,
+    date_to: Option<i64>,
+    has_attachment: Option<bool>,
+    is_read: Option<bool>,
+    is_flagged: Option<bool>,
+}
+
+/// Parse a search query string extracting structured operators like `from:`,
+/// `to:`, `subject:`, `in:`/`folder:`, `date:`, `after:`, `before:`, and
+/// `has:attachment`. Remaining text becomes the free-text query.
+///
+/// Supports quoted values: `from:"John Doe"`, `subject:"meeting notes"`.
+fn parse_search_query(input: &str) -> ParsedQuery {
+    let mut text_parts: Vec<String> = Vec::new();
+    let mut subject_only: Option<String> = None;
+    let mut folder: Option<String> = None;
+    let mut from: Option<String> = None;
+    let mut to: Option<String> = None;
+    let mut date_from: Option<i64> = None;
+    let mut date_to: Option<i64> = None;
+    let mut has_attachment: Option<bool> = None;
+    let mut is_read: Option<bool> = None;
+    let mut is_flagged: Option<bool> = None;
+
+    let tokens = tokenize_query(input);
+
+    for token in tokens {
+        if let Some((operator, value)) = split_operator(&token) {
+            let op = operator.to_lowercase();
+            match op.as_str() {
+                "from" => from = Some(value),
+                "to" => to = Some(value),
+                "subject" => subject_only = Some(value),
+                "in" | "folder" => folder = Some(value),
+                "date" => {
+                    if let Some((start, end)) = parse_date_range(&value) {
+                        date_from = Some(start);
+                        date_to = Some(end);
+                    }
+                }
+                "after" => {
+                    if let Some(epoch) = parse_date_start(&value) {
+                        date_from = Some(epoch);
+                    }
+                }
+                "before" => {
+                    if let Some(epoch) = parse_date_start(&value) {
+                        date_to = Some(epoch);
+                    }
+                }
+                "has" if value.eq_ignore_ascii_case("attachment") => {
+                    has_attachment = Some(true);
+                }
+                "is" => match value.to_lowercase().as_str() {
+                    "read" => is_read = Some(true),
+                    "unread" => is_read = Some(false),
+                    "flagged" | "starred" => is_flagged = Some(true),
+                    _ => text_parts.push(token),
+                },
+                _ => {
+                    // Unknown operator, treat as plain text
+                    text_parts.push(token);
+                }
+            }
+        } else {
+            text_parts.push(token);
+        }
+    }
+
+    ParsedQuery {
+        text: text_parts.join(" "),
+        subject_only,
+        folder,
+        from,
+        to,
+        date_from,
+        date_to,
+        has_attachment,
+        is_read,
+        is_flagged,
+    }
+}
+
+/// Tokenize a query string, respecting quoted values attached to operators.
+/// For example: `from:"John Doe" hello world` yields
+/// `["from:John Doe", "hello", "world"]`.
+fn tokenize_query(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = input.chars().peekable();
+    let mut current = String::new();
+
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            chars.next();
+        } else if ch == '"' {
+            // Start of a quoted section
+            chars.next(); // consume opening quote
+            while let Some(&qch) = chars.peek() {
+                if qch == '"' {
+                    chars.next(); // consume closing quote
+                    break;
+                }
+                current.push(qch);
+                chars.next();
+            }
+        } else {
+            current.push(ch);
+            chars.next();
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
+}
+
+/// Split a token into (operator, value) if it matches `operator:value` pattern.
+fn split_operator(token: &str) -> Option<(String, String)> {
+    if let Some(colon_pos) = token.find(':') {
+        let op = &token[..colon_pos];
+        let val = &token[colon_pos + 1..];
+        // Only treat as operator if the operator part is alphabetic and value is non-empty
+        if !op.is_empty() && op.chars().all(|c| c.is_ascii_alphabetic()) && !val.is_empty() {
+            return Some((op.to_string(), val.to_string()));
+        }
+    }
+    None
+}
+
+fn is_leap_year(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+fn now_epoch() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+/// Epoch of Jan 1 00:00:00 UTC for the given year.
+fn year_to_epoch(year: i64) -> Option<i64> {
+    if year < 1970 { return None; }
+    let days: i64 = (1970..year).map(|y| if is_leap_year(y) { 366 } else { 365 }).sum();
+    Some(days * 86_400)
+}
+
+/// Epoch of the 1st of the given month at 00:00:00 UTC.
+fn month_to_epoch(year: i64, month: i64) -> Option<i64> {
+    if !(1..=12).contains(&month) { return None; }
+    let year_start = year_to_epoch(year)?;
+    let days_per_month: [i64; 12] = [31, 28 + i64::from(is_leap_year(year)), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let offset: i64 = days_per_month.iter().take((month - 1) as usize).sum();
+    Some(year_start + offset * 86_400)
+}
+
+/// Epoch of the given day at 00:00:00 UTC.
+fn day_to_epoch(year: i64, month: i64, day: i64) -> Option<i64> {
+    if !(1..=31).contains(&day) { return None; }
+    Some(month_to_epoch(year, month)? + (day - 1) * 86_400)
+}
+
+/// Parse a date expression into a (start, end) epoch range for the `date:` operator.
+/// Supports: YYYY, YYYY-MM, YYYY-MM-DD, MM/DD/YYYY, MM/YYYY, today, yesterday,
+/// last-week, last-month.
+fn parse_date_range(date_str: &str) -> Option<(i64, i64)> {
+    let s = date_str.trim().to_lowercase();
+
+    // Year only: date:2022 → full year
+    if s.len() == 4 && s.chars().all(|c| c.is_ascii_digit()) {
+        let year: i64 = s.parse().ok()?;
+        let start = year_to_epoch(year)?;
+        let end = year_to_epoch(year + 1)? - 1;
+        return Some((start, end));
+    }
+
+    if s.contains('-') {
+        let parts: Vec<&str> = s.splitn(3, '-').collect();
+        if parts.len() == 2 {
+            // YYYY-MM → full month
+            let year: i64 = parts[0].parse().ok()?;
+            let month: i64 = parts[1].parse().ok()?;
+            let start = month_to_epoch(year, month)?;
+            let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+            let end = month_to_epoch(ny, nm)? - 1;
+            return Some((start, end));
+        }
+    }
+
+    // Everything else: fall back to single day
+    let start = parse_date_start(date_str)?;
+    Some((start, start + 86_400 - 1))
+}
+
+/// Parse a date expression into a start epoch for `after:` / `before:` operators.
+/// Supports: YYYY, YYYY-MM, YYYY-MM-DD, MM/DD/YYYY, MM/YYYY, today, yesterday,
+/// last-week, last-month.
+fn parse_date_start(date_str: &str) -> Option<i64> {
+    let s = date_str.trim().to_lowercase();
+
+    // Relative keywords
+    let today_start = now_epoch() - (now_epoch() % 86_400);
+    match s.as_str() {
+        "today"      => return Some(today_start),
+        "yesterday"  => return Some(today_start - 86_400),
+        "last-week"  => return Some(today_start - 7 * 86_400),
+        "last-month" => return Some(today_start - 30 * 86_400),
+        _ => {}
+    }
+
+    // Year only: 2022
+    if s.len() == 4 && s.chars().all(|c| c.is_ascii_digit()) {
+        let year: i64 = s.parse().ok()?;
+        return year_to_epoch(year);
+    }
+
+    if s.contains('-') {
+        let parts: Vec<&str> = s.splitn(3, '-').collect();
+        return match parts.len() {
+            2 => month_to_epoch(parts[0].parse().ok()?, parts[1].parse().ok()?),
+            3 => day_to_epoch(parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?),
+            _ => None,
+        };
+    }
+
+    if s.contains('/') {
+        let parts: Vec<&str> = s.split('/').collect();
+        return match parts.len() {
+            // MM/YYYY
+            2 => month_to_epoch(parts[1].parse().ok()?, parts[0].parse().ok()?),
+            // MM/DD/YYYY
+            3 => day_to_epoch(parts[2].parse().ok()?, parts[0].parse().ok()?, parts[1].parse().ok()?),
+            _ => None,
+        };
+    }
+
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Query parameters
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /api/search`.
+#[derive(Deserialize)]
+pub struct SearchParams {
+    /// The search text (required, must not be empty).
+    pub q: Option<String>,
+    /// Optional folder filter (encrypted folder ID from the UI folder picker).
+    pub folder: Option<crate::folder_cipher::FolderId>,
+    /// Optional from address filter.
+    pub from: Option<String>,
+    /// Optional to address filter.
+    pub to: Option<String>,
+    /// Optional date range start (Unix epoch seconds).
+    pub date_from: Option<i64>,
+    /// Optional date range end (Unix epoch seconds).
+    pub date_to: Option<i64>,
+    /// Optional attachment filter.
+    pub has_attachment: Option<bool>,
+    /// Maximum number of results (default 50).
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    /// Offset for pagination (default 0).
+    #[serde(default)]
+    pub offset: usize,
+    /// Sort order: "date_desc" (default) or "date_asc".
+    #[serde(default = "default_sort")]
+    pub sort: String,
+    /// Filter by read/unread: true = read only, false = unread only.
+    pub is_read: Option<bool>,
+    /// Filter by flagged/starred: true = flagged only.
+    pub is_flagged: Option<bool>,
+}
+
+fn default_sort() -> String {
+    "date_desc".to_string()
+}
+
+fn default_limit() -> usize {
+    200
+}
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
+/// Response envelope for `POST /api/search`.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct SearchResponse {
+    pub results: Vec<SearchResultItem>,
+    pub total_count: usize,
+    pub query: String,
+}
+
+/// A single search result item enriched with message metadata from SQLite.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct SearchResultItem {
+    pub uid: u32,
+    /// Opaque, single-use token - see `MessageSummary::folder_id`.
+    pub folder_id: FolderId,
+    /// Plaintext, stable folder name - see `MessageSummary::folder_name`.
+    pub folder_name: String,
+    pub score: f32,
+    pub subject: String,
+    pub from_address: String,
+    pub from_name: String,
+    pub to_addresses: String,
+    pub date: String,
+    pub date_epoch: i64,
+    pub flags: String,
+    pub has_attachments: bool,
+    pub snippet: String,
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
+
+/// `POST /api/search`
+///
+/// Searches the user's messages using both SQLite (for header fields) and
+/// Tantivy (for body text). Results are merged and deduplicated.
+pub async fn search_messages(
+    Extension(session): Extension<SessionState>,
+    Extension(search_engine): Extension<Arc<SearchEngine>>,
+    Extension(db_pool_manager): Extension<Arc<db::pool::DbPoolManager>>,
+    Json(params): Json<SearchParams>,
+) -> Result<Response, AppError> {
+    let cipher = crate::folder_cipher::FolderCipher::new(&session.folder_key);
+    // Validate that `q` is provided and non-empty.
+    let query_text = params
+        .q
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if query_text.is_empty() {
+        return Err(AppError::BadRequest(
+            "Query parameter 'q' is required and must not be empty".to_string(),
+        ));
+    }
+
+    let sort_order = params.sort.clone();
+    let limit = params.limit;
+
+    // Parse structured operators from the query string.
+    let parsed = parse_search_query(&query_text);
+
+    // params.folder is an encrypted folder ID from the UI folder picker; parsed.folder
+    // is a plaintext name from the user-typed `in:INBOX` operator.
+    let ui_folder = params.folder.as_ref()
+        .map(|id| cipher.decrypt(id))
+        .transpose()?;
+    let folder = ui_folder.or(parsed.folder);
+    let from = params.from.or(parsed.from);
+    let to = params.to.or(parsed.to);
+    let date_from = params.date_from.or(parsed.date_from);
+    let date_to = params.date_to.or(parsed.date_to);
+    let has_attachment = params.has_attachment.or(parsed.has_attachment);
+    let is_read = params.is_read.or(parsed.is_read);
+    let is_flagged = params.is_flagged.or(parsed.is_flagged);
+
+    let text_clone = parsed.text.clone();
+    let folder_clone = folder.clone();
+    let from_clone = from.clone();
+    let to_clone = to.clone();
+    let sqlite_results = db::pool::with_user_db(&db_pool_manager, &session.user_hash, move |conn| {
+        db::messages::search_messages_sqlite(
+            conn,
+            &text_clone,
+            db::messages::SearchFilters {
+                folder: folder_clone.as_deref(),
+                from: from_clone.as_deref(),
+                to: to_clone.as_deref(),
+                date_from,
+                date_to,
+                has_attachment,
+                is_read,
+                is_flagged,
+            },
+            limit,
+        )
+    })
+    .await
+    .map_err(|e| AppError::InternalError(format!("Search error: {e}")))?;
+
+    // Collect SQLite results as SearchResultItems.
+    let mut seen = std::collections::HashSet::new();
+    let mut results: Vec<SearchResultItem> = sqlite_results
+        .into_iter()
+        .map(|msg| {
+            seen.insert((msg.folder.clone(), msg.uid));
+            SearchResultItem {
+                uid: msg.uid,
+                folder_id: cipher.encrypt(&msg.folder),
+                folder_name: msg.folder.clone(),
+                score: 1.0,
+                subject: msg.subject,
+                from_address: msg.from_address,
+                from_name: msg.from_name,
+                to_addresses: msg.to_addresses,
+                date: msg.date,
+                date_epoch: msg.date_epoch,
+                flags: msg.flags,
+                has_attachments: msg.has_attachments,
+                snippet: msg.snippet,
+            }
+        })
+        .collect();
+
+    // Secondary search: Tantivy for body text matches not found by SQLite.
+    // Only add results up to the limit cap.
+    if !parsed.text.is_empty() && results.len() < limit
+        && let Ok(user_index) = search_engine.open_user_index(&session.user_hash)
+        && let Ok((tantivy_results, _)) = user_index.search(&SearchQuery {
+            text: parsed.text,
+            subject_only: parsed.subject_only,
+            folder,
+            from,
+            to,
+            date_from,
+            date_to,
+            has_attachment,
+            limit,
+            offset: params.offset,
+        })
+    {
+        // Resolve Tantivy UIDs via SQLite.
+        let remaining = limit.saturating_sub(results.len());
+        let tantivy_enriched = db::pool::with_user_db(&db_pool_manager, &session.user_hash, move |conn| {
+            let mut items = Vec::new();
+            for sr in &tantivy_results {
+                if items.len() >= remaining {
+                    break;
+                }
+                if let Ok(Some(msg)) = db::messages::get_single_message(conn, &sr.folder, sr.uid) {
+                    items.push((sr.score, sr.snippet.clone(), msg));
+                }
+            }
+            Ok(items)
+        })
+        .await
+        .map_err(|e| AppError::InternalError(format!("Database error: {e}")))?;
+
+        for (score, snippet, msg) in tantivy_enriched {
+            if seen.contains(&(msg.folder.clone(), msg.uid)) {
+                continue;
+            }
+            seen.insert((msg.folder.clone(), msg.uid));
+            results.push(SearchResultItem {
+                uid: msg.uid,
+                folder_id: cipher.encrypt(&msg.folder),
+                folder_name: msg.folder.clone(),
+                score,
+                subject: msg.subject,
+                from_address: msg.from_address,
+                from_name: msg.from_name,
+                to_addresses: msg.to_addresses,
+                date: msg.date,
+                date_epoch: msg.date_epoch,
+                flags: msg.flags,
+                has_attachments: msg.has_attachments,
+                snippet: if snippet.is_empty() { msg.snippet } else { snippet },
+            });
+        }
+    }
+
+    // Sort results by date.
+    let sort_asc = sort_order == "date_asc";
+    results.sort_by(|a, b| {
+        if sort_asc { a.date_epoch.cmp(&b.date_epoch) } else { b.date_epoch.cmp(&a.date_epoch) }
+    });
+
+    // Cap to requested limit after sorting.
+    results.truncate(limit);
+
+    Ok(Json(SearchResponse {
+        total_count: results.len(),
+        results,
+        query: query_text,
+    })
+    .into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_plain_text() {
+        let p = parse_search_query("hello world");
+        assert_eq!(p.text, "hello world");
+        assert!(p.from.is_none());
+        assert!(p.to.is_none());
+        assert!(p.subject_only.is_none());
+        assert!(p.folder.is_none());
+    }
+
+    #[test]
+    fn parse_from_operator() {
+        let p = parse_search_query("from:alice@example.com hello");
+        assert_eq!(p.text, "hello");
+        assert_eq!(p.from.as_deref(), Some("alice@example.com"));
+    }
+
+    #[test]
+    fn parse_to_operator() {
+        let p = parse_search_query("to:bob@example.com updates");
+        assert_eq!(p.text, "updates");
+        assert_eq!(p.to.as_deref(), Some("bob@example.com"));
+    }
+
+    #[test]
+    fn parse_subject_operator() {
+        let p = parse_search_query("subject:meeting notes");
+        assert_eq!(p.subject_only.as_deref(), Some("meeting"));
+        assert_eq!(p.text, "notes");
+    }
+
+    #[test]
+    fn parse_subject_quoted() {
+        let p = parse_search_query("subject:\"meeting notes\" extra");
+        assert_eq!(p.subject_only.as_deref(), Some("meeting notes"));
+        assert_eq!(p.text, "extra");
+    }
+
+    #[test]
+    fn parse_folder_operators() {
+        let p = parse_search_query("in:Sent hello");
+        assert_eq!(p.folder.as_deref(), Some("Sent"));
+        assert_eq!(p.text, "hello");
+
+        let p2 = parse_search_query("folder:INBOX test");
+        assert_eq!(p2.folder.as_deref(), Some("INBOX"));
+    }
+
+    #[test]
+    fn parse_date_operator() {
+        let p = parse_search_query("date:2024-01-15 news");
+        assert_eq!(p.text, "news");
+        assert!(p.date_from.is_some());
+        assert!(p.date_to.is_some());
+        // 2024-01-15 00:00:00 UTC = 1705276800
+        assert_eq!(p.date_from, Some(1_705_276_800));
+        assert_eq!(p.date_to, Some(1_705_276_800 + 86_399));
+    }
+
+    #[test]
+    fn parse_after_before() {
+        let p = parse_search_query("after:2024-01-01 before:2024-06-01 hello");
+        assert_eq!(p.text, "hello");
+        // 2024-01-01 = 1704067200
+        assert_eq!(p.date_from, Some(1_704_067_200));
+        // 2024-06-01 = 1717200000
+        assert_eq!(p.date_to, Some(1_717_200_000));
+    }
+
+    #[test]
+    fn parse_has_attachment() {
+        let p = parse_search_query("has:attachment report");
+        assert_eq!(p.text, "report");
+        assert_eq!(p.has_attachment, Some(true));
+    }
+
+    #[test]
+    fn parse_multiple_operators() {
+        let p = parse_search_query("from:alice@test.com to:bob@test.com in:INBOX has:attachment meeting");
+        assert_eq!(p.from.as_deref(), Some("alice@test.com"));
+        assert_eq!(p.to.as_deref(), Some("bob@test.com"));
+        assert_eq!(p.folder.as_deref(), Some("INBOX"));
+        assert_eq!(p.has_attachment, Some(true));
+        assert_eq!(p.text, "meeting");
+    }
+
+    #[test]
+    fn parse_quoted_from() {
+        let p = parse_search_query("from:\"John Doe\" hello");
+        assert_eq!(p.from.as_deref(), Some("John Doe"));
+        assert_eq!(p.text, "hello");
+    }
+
+    #[test]
+    fn parse_unknown_operator_kept_as_text() {
+        let p = parse_search_query("foo:bar hello");
+        assert_eq!(p.text, "foo:bar hello");
+    }
+
+    #[test]
+    fn parse_empty_value_not_operator() {
+        // "from:" with no value should not be treated as an operator
+        let p = parse_search_query("hello from:");
+        assert_eq!(p.text, "hello from:");
+        assert!(p.from.is_none());
+    }
+
+    #[test]
+    fn date_parsing_basic() {
+        // 2024-01-01 00:00:00 UTC
+        assert_eq!(parse_date_start("2024-01-01"), Some(1_704_067_200));
+        // Invalid date
+        assert_eq!(parse_date_start("not-a-date"), None);
+        assert_eq!(parse_date_start("2024-13-01"), None);
+    }
+}

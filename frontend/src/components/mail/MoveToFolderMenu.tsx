@@ -1,0 +1,93 @@
+"use client";
+
+import { useState, useRef, useEffect, useMemo } from "react";
+import { AnimatePresence } from "framer-motion";
+import { FolderInput } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useFolders } from "@/hooks/useFolders";
+import { formatFolderName } from "./FolderTree";
+import { useUiStore } from "@/stores/useUiStore";
+import { createScaleFadeVariants } from "@/lib/motion/variants";
+import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
+
+interface MoveToFolderMenuProps {
+  currentFolder: string;
+  onMove: (toFolder: string) => void;
+}
+
+export function MoveToFolderMenu({
+  currentFolder,
+  onMove,
+}: MoveToFolderMenuProps) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { data } = useFolders();
+  const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
+  const menuMotionProps = useMemo(() => createScaleFadeVariants(effectiveAnimationMode), [effectiveAnimationMode]);
+
+  const folders =
+    data?.folders.filter((f) => f.name !== currentFolder) ?? [];
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setOpen((prev) => !prev)}
+        className="gap-1.5"
+      >
+        <FolderInput className="size-4" />
+        Move to...
+      </Button>
+
+      <AnimatePresence>
+        {open ? (
+          <AnimatedDiv
+            key="move-to-folder-menu"
+            data-testid="move-to-folder-menu-transition"
+            variants={menuMotionProps}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-md border border-border bg-popover py-1 shadow-md"
+          >
+            {folders.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-muted-foreground">
+                No other folders
+              </div>
+            ) : (
+              folders.map((folder) => (
+                <button
+                  key={folder.name}
+                  type="button"
+                  onClick={() => {
+                    onMove(folder.name);
+                    setOpen(false);
+                  }}
+                  className="flex w-full items-center px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent active:bg-accent/70"
+                >
+                  {formatFolderName(folder.name)}
+                </button>
+              ))
+            )}
+          </AnimatedDiv>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
