@@ -1,0 +1,366 @@
+"use client";
+
+import { useState, useRef, useCallback, useMemo } from "react";
+import { AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
+import {
+  Mail,
+  MailOpen,
+  Star,
+  Trash2,
+  FolderInput,
+  Tag,
+  X,
+  Loader2,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useUiStore } from "@/stores/useUiStore";
+import {
+  useBulkUpdateFlags,
+  useBulkMoveMessages,
+  useBulkDeleteMessages,
+} from "@/hooks/useMessages";
+import { useFolders } from "@/hooks/useFolders";
+import { useClickOutside } from "@/hooks/useClickOutside";
+import { useTags, useBulkAddTag } from "@/hooks/useTags";
+import { createFadeSlideVariants } from "@/lib/motion/variants";
+import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
+import { ActionTooltip, ActionTooltipProvider } from "./ActionTooltip";
+import type { BulkMessageOpResponse } from "@/types/generated/BulkMessageOpResponse";
+
+export function BulkActionBar() {
+  const selectedUids = useUiStore((s) => s.selectedMessageUids);
+  const activeFolder = useUiStore((s) => s.activeFolder);
+  const clearBulkSelection = useUiStore((s) => s.clearBulkSelection);
+  const selectedMessageUid = useUiStore((s) => s.selectedMessageUid);
+  const selectMessage = useUiStore((s) => s.selectMessage);
+
+  const bulkUpdateFlags = useBulkUpdateFlags();
+  const bulkMoveMessages = useBulkMoveMessages();
+  const bulkDeleteMessages = useBulkDeleteMessages();
+
+  const [isBusy, setIsBusy] = useState(false);
+  const [moveMenuOpen, setMoveMenuOpen] = useState(false);
+  const [tagMenuOpen, setTagMenuOpen] = useState(false);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+  const tagMenuRef = useRef<HTMLDivElement>(null);
+
+  const { data: foldersData } = useFolders();
+  const folders = foldersData?.folders ?? [];
+  const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
+  const barMotionProps = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "y"), [effectiveAnimationMode]);
+  const menuVariants = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "y"), [effectiveAnimationMode]);
+  const { data: tagsData } = useTags();
+  const allTags = tagsData?.tags ?? [];
+  const bulkAddTag = useBulkAddTag();
+
+  const closeMoveMenu = useCallback(() => setMoveMenuOpen(false), []);
+  const closeTagMenu = useCallback(() => setTagMenuOpen(false), []);
+  useClickOutside(moveMenuRef, closeMoveMenu, moveMenuOpen);
+  useClickOutside(tagMenuRef, closeTagMenu, tagMenuOpen);
+
+  const runBulkAction = useCallback(
+    async (action: () => Promise<BulkMessageOpResponse>) => {
+      setIsBusy(true);
+      try {
+        const result = await action();
+        if (result.failed_uids.length > 0) {
+          toast.warning(
+            result.failed_uids.length === 1
+              ? "1 message could not be found and was skipped"
+              : `${result.failed_uids.length} messages could not be found and were skipped`,
+          );
+        }
+      } finally {
+        setIsBusy(false);
+        clearBulkSelection();
+      }
+    },
+    [clearBulkSelection],
+  );
+
+  const handleMarkRead = useCallback(() => {
+    runBulkAction(() =>
+      bulkUpdateFlags.mutateAsync({
+        folder: activeFolder,
+        uids: selectedUids,
+        flags: ["\\Seen"],
+        add: true,
+      }),
+    );
+  }, [runBulkAction, bulkUpdateFlags, activeFolder, selectedUids]);
+
+  const handleMarkUnread = useCallback(() => {
+    runBulkAction(() =>
+      bulkUpdateFlags.mutateAsync({
+        folder: activeFolder,
+        uids: selectedUids,
+        flags: ["\\Seen"],
+        add: false,
+      }),
+    );
+  }, [runBulkAction, bulkUpdateFlags, activeFolder, selectedUids]);
+
+  const handleStar = useCallback(() => {
+    runBulkAction(() =>
+      bulkUpdateFlags.mutateAsync({
+        folder: activeFolder,
+        uids: selectedUids,
+        flags: ["\\Flagged"],
+        add: true,
+      }),
+    );
+  }, [runBulkAction, bulkUpdateFlags, activeFolder, selectedUids]);
+
+  const handleDelete = useCallback(() => {
+    // If the message currently open in the reading pane is part of this
+    // bulk action, close it - it won't exist in this folder anymore.
+    if (selectedMessageUid !== null && selectedUids.includes(selectedMessageUid)) {
+      selectMessage(null);
+    }
+    runBulkAction(() =>
+      bulkDeleteMessages.mutateAsync({ folder: activeFolder, uids: selectedUids }),
+    );
+  }, [runBulkAction, bulkDeleteMessages, activeFolder, selectedUids, selectedMessageUid, selectMessage]);
+
+  const handleMoveTo = useCallback(
+    (targetFolder: string) => {
+      setMoveMenuOpen(false);
+      if (selectedMessageUid !== null && selectedUids.includes(selectedMessageUid)) {
+        selectMessage(null);
+      }
+      runBulkAction(() =>
+        bulkMoveMessages.mutateAsync({
+          fromFolder: activeFolder,
+          toFolder: targetFolder,
+          uids: selectedUids,
+        }),
+      );
+    },
+    [runBulkAction, bulkMoveMessages, activeFolder, selectedUids, selectedMessageUid, selectMessage],
+  );
+
+  const handleBulkTag = useCallback(
+    (tagId: string) => {
+      setTagMenuOpen(false);
+      bulkAddTag.mutate({
+        tagId,
+        messages: selectedUids.map((uid) => ({ uid, folder: activeFolder })),
+      });
+    },
+    [bulkAddTag, selectedUids, activeFolder],
+  );
+
+  const hasSelection = selectedUids.length > 0;
+  const actionContent = (
+    <>
+      {/* Selection count */}
+      <span className="mr-2 text-sm font-medium text-foreground">
+        {selectedUids.length} selected
+      </span>
+
+      {isBusy && (
+        <Loader2 className="mr-1 size-4 animate-spin text-muted-foreground" />
+      )}
+
+      {/* Mark read */}
+      <ActionTooltip label="Mark as read">
+        <button
+          type="button"
+          aria-label="Mark as read"
+          disabled={isBusy}
+          onClick={handleMarkRead}
+          className={cn(
+            "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent active:bg-accent/70 hover:text-foreground",
+            "disabled:pointer-events-none disabled:opacity-50",
+          )}
+        >
+          <Mail className="size-4" />
+        </button>
+      </ActionTooltip>
+
+      {/* Mark unread */}
+      <ActionTooltip label="Mark as unread">
+        <button
+          type="button"
+          aria-label="Mark as unread"
+          disabled={isBusy}
+          onClick={handleMarkUnread}
+          className={cn(
+            "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent active:bg-accent/70 hover:text-foreground",
+            "disabled:pointer-events-none disabled:opacity-50",
+          )}
+        >
+          <MailOpen className="size-4" />
+        </button>
+      </ActionTooltip>
+
+      {/* Star */}
+      <ActionTooltip label="Star">
+        <button
+          type="button"
+          aria-label="Star"
+          disabled={isBusy}
+          onClick={handleStar}
+          className={cn(
+            "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent active:bg-accent/70 hover:text-foreground",
+            "disabled:pointer-events-none disabled:opacity-50",
+          )}
+        >
+          <Star className="size-4" />
+        </button>
+      </ActionTooltip>
+
+      {/* Delete */}
+      <ActionTooltip label="Delete">
+        <button
+          type="button"
+          aria-label="Delete"
+          disabled={isBusy}
+          onClick={handleDelete}
+          className={cn(
+            "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent active:bg-accent/70 hover:text-destructive",
+            "disabled:pointer-events-none disabled:opacity-50",
+          )}
+        >
+          <Trash2 className="size-4" />
+        </button>
+      </ActionTooltip>
+
+      {/* Move to folder */}
+      <div className="relative" ref={moveMenuRef}>
+        <ActionTooltip label="Move to folder">
+        <button
+          type="button"
+          aria-label="Move to folder"
+          disabled={isBusy}
+          onClick={() => setMoveMenuOpen((prev) => !prev)}
+          className={cn(
+            "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent active:bg-accent/70 hover:text-foreground",
+            "disabled:pointer-events-none disabled:opacity-50",
+            moveMenuOpen && "bg-accent text-foreground",
+          )}
+        >
+          <FolderInput className="size-4" />
+        </button>
+        </ActionTooltip>
+
+        <AnimatePresence>
+          {moveMenuOpen && (
+          <AnimatedDiv
+            variants={menuVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="absolute left-0 top-full z-50 mt-1 min-w-[160px] rounded-md border border-border bg-popover py-1 shadow-md"
+          >
+            {folders
+              .filter((f) => f.name !== activeFolder)
+              .map((f) => (
+                <button
+                  key={f.name}
+                  type="button"
+                  onClick={() => handleMoveTo(f.name)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent active:bg-accent/70"
+                >
+                  {f.name}
+                </button>
+              ))}
+            {folders.filter((f) => f.name !== activeFolder).length === 0 && (
+              <span className="block px-3 py-1.5 text-sm text-muted-foreground">
+                No other folders
+              </span>
+            )}
+          </AnimatedDiv>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Tag */}
+      <div className="relative" ref={tagMenuRef}>
+        <ActionTooltip label="Add tag">
+        <button
+          type="button"
+          aria-label="Add tag"
+          disabled={isBusy}
+          onClick={() => setTagMenuOpen((prev) => !prev)}
+          className={cn(
+            "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent active:bg-accent/70 hover:text-foreground",
+            "disabled:pointer-events-none disabled:opacity-50",
+            tagMenuOpen && "bg-accent text-foreground",
+          )}
+        >
+          <Tag className="size-4" />
+        </button>
+        </ActionTooltip>
+
+        <AnimatePresence>
+          {tagMenuOpen && (
+          <AnimatedDiv
+            variants={menuVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="absolute left-0 top-full z-50 mt-1 min-w-[160px] rounded-md border border-border bg-popover py-1 shadow-md"
+          >
+            {allTags.map((tag) => (
+              <button
+                key={tag.id}
+                type="button"
+                onClick={() => handleBulkTag(tag.id)}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent active:bg-accent/70"
+              >
+                <span
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: tag.color }}
+                />
+                {tag.name}
+              </button>
+            ))}
+            {allTags.length === 0 && (
+              <span className="block px-3 py-1.5 text-sm text-muted-foreground">
+                No tags
+              </span>
+            )}
+          </AnimatedDiv>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Clear selection */}
+      <ActionTooltip label="Clear selection">
+        <button
+          type="button"
+          aria-label="Clear selection"
+          onClick={clearBulkSelection}
+          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent active:bg-accent/70 hover:text-foreground"
+        >
+          <X className="size-4" />
+        </button>
+      </ActionTooltip>
+    </>
+  );
+
+  return (
+    <AnimatePresence>
+      {hasSelection ? (
+        <ActionTooltipProvider>
+          <AnimatedDiv
+            key="bulk-action-bar"
+            data-testid="bulk-action-bar-transition"
+            variants={barMotionProps}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="flex shrink-0 items-center gap-1 border-b border-border bg-muted/50 px-3 py-1.5"
+          >
+            {actionContent}
+          </AnimatedDiv>
+        </ActionTooltipProvider>
+      ) : null}
+    </AnimatePresence>
+  );
+}

@@ -1,0 +1,303 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence } from "framer-motion";
+import { useUiStore } from "@/stores/useUiStore";
+import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
+import { createFadeSlideVariants } from "@/lib/motion/variants";
+import { getMotionTokens } from "@/lib/motion/config";
+import { SearchBar } from "@/components/mail/SearchBar";
+import { SearchResults } from "@/components/mail/SearchResults";
+import { MessageActionBar } from "@/components/mail/MessageActionBar";
+import { isValidCommittedSearch } from "@/lib/search-parser";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileHeader } from "@/components/shared/MobileHeader";
+
+interface ThreePanelLayoutProps {
+  sidebar: React.ReactNode;
+  messageList: React.ReactNode;
+  readingPane: React.ReactNode;
+}
+
+
+const MIN_SIDEBAR_WIDTH = 140;
+const MAX_SIDEBAR_WIDTH = 400;
+const MIN_MESSAGE_LIST_WIDTH = 280;
+const MAX_MESSAGE_LIST_WIDTH = 700;
+const MIN_READING_PANE_WIDTH = 420;
+const RESIZE_HANDLE_BUDGET = 8;
+
+function ResizeHandle({
+  onDrag,
+}: {
+  onDrag: (deltaX: number) => void;
+}) {
+  const dragging = useRef(false);
+  const lastX = useRef(0);
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragging.current = true;
+      lastX.current = e.clientX;
+
+      const onMouseMove = (ev: MouseEvent) => {
+        if (!dragging.current) return;
+        const delta = ev.clientX - lastX.current;
+        lastX.current = ev.clientX;
+        onDrag(delta);
+      };
+
+      const onMouseUp = () => {
+        dragging.current = false;
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [onDrag],
+  );
+
+  return (
+    <button
+      type="button"
+      aria-label="Resize panel"
+      onMouseDown={onMouseDown}
+      className="group relative z-10 w-0 cursor-col-resize outline-none"
+    >
+      {/* Invisible wider hit area */}
+      <div className="absolute inset-y-0 -left-1 w-2 group-hover:bg-primary/20 group-active:bg-primary/30" />
+    </button>
+  );
+}
+
+export function ThreePanelLayout({
+  sidebar,
+  messageList,
+  readingPane,
+}: ThreePanelLayoutProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
+  const mobilePanelView = useUiStore((s) => s.mobilePanelView);
+  const isAnimating = useRef(false);
+  const sidebarWidth = useUiStore((s) => s.sidebarWidth);
+  const messageListWidth = useUiStore((s) => s.messageListWidth);
+  const setSidebarWidth = useUiStore((s) => s.setSidebarWidth);
+  const setMessageListWidth = useUiStore((s) => s.setMessageListWidth);
+  const selectedMessageUid = useUiStore((s) => s.selectedMessageUid);
+  const searchActive = useUiStore((s) => s.searchActive);
+  const searchQuery = useUiStore((s) => s.searchQuery);
+  const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
+  const motionTokens = useMemo(() => getMotionTokens(effectiveAnimationMode), [effectiveAnimationMode]);
+  const centerTransition = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "x"), [effectiveAnimationMode]);
+  const readingPaneTransition = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "x"), [effectiveAnimationMode]);
+  const readingPaneVisible = useUiStore((s) => s.readingPaneVisible);
+  const hasValidCommittedSearch = isValidCommittedSearch(searchQuery);
+  const showSearchResults = searchActive && hasValidCommittedSearch;
+  const [containerWidth, setContainerWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    setContainerWidth(node.getBoundingClientRect().width);
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      setContainerWidth(entry.contentRect.width);
+    });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const maxMessageListWidth = useMemo(() => {
+    if (!readingPaneVisible) {
+      return MAX_MESSAGE_LIST_WIDTH;
+    }
+
+    if (containerWidth == null) {
+      return MAX_MESSAGE_LIST_WIDTH;
+    }
+
+    const remaining = Math.floor(
+      containerWidth -
+      sidebarWidth -
+      RESIZE_HANDLE_BUDGET -
+      MIN_READING_PANE_WIDTH,
+    );
+
+    return Math.max(
+      MIN_MESSAGE_LIST_WIDTH,
+      Math.min(MAX_MESSAGE_LIST_WIDTH, remaining),
+    );
+  }, [containerWidth, readingPaneVisible, sidebarWidth]);
+
+  const resolvedMessageListWidth = readingPaneVisible
+    ? Math.max(MIN_MESSAGE_LIST_WIDTH, Math.min(messageListWidth, maxMessageListWidth))
+    : null;
+
+  const handleSidebarDrag = useCallback(
+    (delta: number) => {
+      const current = useUiStore.getState().sidebarWidth;
+      setSidebarWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, current + delta)));
+    },
+    [setSidebarWidth],
+  );
+
+  const handleMessageListDrag = useCallback(
+    (delta: number) => {
+      const current = useUiStore.getState().messageListWidth;
+      setMessageListWidth(
+        Math.max(MIN_MESSAGE_LIST_WIDTH, Math.min(maxMessageListWidth, current + delta)),
+      );
+    },
+    [maxMessageListWidth, setMessageListWidth],
+  );
+
+  // Track animation state to let consumers avoid expensive work during transitions
+  useEffect(() => {
+    isAnimating.current = true;
+    const t = setTimeout(() => { isAnimating.current = false; }, motionTokens.duration.normal * 1000 + 20);
+    return () => clearTimeout(t);
+  }, [mobilePanelView, motionTokens.duration.normal]);
+
+  // Mobile branch: three full-width panels sliding via CSS translateX
+  if (isMobile) {
+    const PANEL_ORDER = ["sidebar", "list", "reading"] as const;
+
+    function panelStyle(panel: "sidebar" | "list" | "reading"): React.CSSProperties {
+      const active = PANEL_ORDER.indexOf(mobilePanelView);
+      const target = PANEL_ORDER.indexOf(panel);
+      const offset = (target - active) * 100;
+      return {
+        position: "absolute",
+        inset: 0,
+        transform: `translateX(${offset}%)`,
+        transition: `transform ${motionTokens.duration.normal * 1000}ms cubic-bezier(0.2, 0, 0, 1)`,
+        willChange: "transform",
+      };
+    }
+
+    return (
+      <div ref={containerRef} className="relative h-full min-h-0 w-full overflow-hidden">
+        <div
+          style={panelStyle("sidebar")}
+          {...(mobilePanelView !== "sidebar" ? { inert: true } : {})}
+        >
+          {sidebar}
+        </div>
+
+        <div
+          style={panelStyle("list")}
+          {...(mobilePanelView !== "list" ? { inert: true } : {})}
+          className="flex flex-col"
+        >
+          <MobileHeader panel="list" />
+          <SearchBar />
+          <div className="flex-1 min-h-0 overflow-y-auto">{messageList}</div>
+        </div>
+
+        <div
+          style={panelStyle("reading")}
+          {...(mobilePanelView !== "reading" ? { inert: true } : {})}
+          className="flex flex-col"
+        >
+          <MobileHeader panel="reading" />
+          <div className="flex-1 min-h-0 overflow-y-auto">{readingPane}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="flex h-full min-h-0 w-full overflow-hidden">
+      {/* Folder sidebar */}
+      <aside
+        className="shrink-0 overflow-x-hidden overflow-y-auto bg-sidebar"
+        style={{ width: sidebarWidth }}
+      >
+        {sidebar}
+      </aside>
+
+      {/* Resize handle: sidebar | message list */}
+      <ResizeHandle onDrag={handleSidebarDrag} />
+
+      {/* Center panel — search bar + message list or search results */}
+      <main
+        className={
+          readingPaneVisible
+            ? "flex shrink-0 flex-col overflow-hidden border-x border-border"
+            : "flex min-w-0 flex-1 flex-col overflow-hidden border-l border-border"
+        }
+        style={readingPaneVisible ? { width: resolvedMessageListWidth ?? messageListWidth } : undefined}
+      >
+        <SearchBar />
+        <AnimatePresence mode="wait" initial={false}>
+          {showSearchResults ? (
+            <AnimatedDiv
+              key="search"
+              data-testid="three-panel-search-transition"
+              variants={centerTransition}
+              initial={centerTransition.initial}
+              animate={centerTransition.animate}
+              exit={centerTransition.exit}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <SearchResults />
+            </AnimatedDiv>
+          ) : (
+            <AnimatedDiv
+              key="list"
+              data-testid="three-panel-list-transition"
+              variants={centerTransition}
+              initial={centerTransition.initial}
+              animate={centerTransition.animate}
+              exit={centerTransition.exit}
+              className="flex-1 overflow-y-auto"
+            >
+              {messageList}
+            </AnimatedDiv>
+          )}
+        </AnimatePresence>
+      </main>
+
+      {/* Resize handle: message list | reading pane */}
+      <AnimatePresence initial={false}>
+        {readingPaneVisible && (
+          <AnimatedDiv
+            key="reading-pane"
+            data-testid="three-panel-reading-pane-transition"
+            variants={readingPaneTransition}
+            initial={readingPaneTransition.initial}
+            animate={readingPaneTransition.animate}
+            exit={readingPaneTransition.exit}
+            className="flex min-h-0 min-w-0 flex-1"
+          >
+            <ResizeHandle onDrag={handleMessageListDrag} />
+            <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <MessageActionBar />
+              {selectedMessageUid !== null ? (
+                <div className="flex min-h-0 flex-1">{readingPane}</div>
+              ) : (
+                <div className="flex h-full w-full items-center justify-center">
+                  <span className="text-2xl font-bold tracking-tight text-muted-foreground/40 select-none">
+                    Rav
+                  </span>
+                </div>
+              )}
+            </section>
+          </AnimatedDiv>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
