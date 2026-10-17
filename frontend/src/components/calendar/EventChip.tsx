@@ -7,7 +7,8 @@ import type { CalendarEvent } from "@/types/calendar";
 type EventChipProps = {
   event: CalendarEvent;
   onClick: (e: React.MouseEvent) => void;
-  onContextMenu: (x: number, y: number, event: CalendarEvent) => void;
+  /** Optional right-click/long-press handler. Unused while the calendar is read-only. */
+  onContextMenu?: (x: number, y: number, event: CalendarEvent) => void;
   className?: string;
   style?: React.CSSProperties;
   title?: string;
@@ -15,9 +16,10 @@ type EventChipProps = {
 };
 
 /**
- * Renders a calendar event as a button with right-click and long-press support.
- * Long-press fires the same context menu callback as right-click.
- * When a long press fires, the subsequent click event is suppressed.
+ * Renders a calendar event as a button with optional right-click and
+ * long-press support. Long-press fires the same context menu callback as
+ * right-click. When a long press fires, the subsequent click event is
+ * suppressed.
  */
 export function EventChip({
   event,
@@ -29,13 +31,13 @@ export function EventChip({
   children,
 }: EventChipProps) {
   const longPress = useLongPress((e) => {
-    onContextMenu(e.clientX, e.clientY, event);
+    onContextMenu?.(e.clientX, e.clientY, event);
   });
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    onContextMenu(e.clientX, e.clientY, event);
+    onContextMenu?.(e.clientX, e.clientY, event);
   };
 
   const handleClick = (e: React.MouseEvent) => {

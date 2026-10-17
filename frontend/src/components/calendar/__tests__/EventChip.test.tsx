@@ -19,6 +19,12 @@ const mockEvent: CalendarEvent = {
   meeting_url: null,
   color: "blue",
   reminder_minutes: null,
+  account_id: null,
+  account_name: null,
+  item_kind: "event",
+  percent_complete: null,
+  priority: null,
+  completed_at: null,
   created_at: "2026-06-15T09:00:00",
   updated_at: "2026-06-15T09:00:00",
 };

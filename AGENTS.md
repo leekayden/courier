@@ -94,6 +94,11 @@ TLS_ENABLED=true
 DATA_DIR=/data
 SESSION_TIMEOUT_HOURS=24
 RUST_LOG=info
+
+# Optional: enables the Google Calendar provider (read-only) in Settings > Calendar.
+# Redirect URI to register in Google Cloud console: {origin}/api/calendar/google/callback
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
 ```
 
 ## NOTES
@@ -102,4 +107,6 @@ RUST_LOG=info
 - Frontend uses bun, Node 22
 - Each user gets their own SQLite DB under `DATA_DIR/{email_hash}/`
 - Real-time updates via WebSocket + IMAP IDLE manager
+- Calendar is disabled until a user configures a provider (CalDAV / Google) in
+  Settings > Calendar; syncing is read-only (events + VTODOs/Google Tasks)
 - CI: `.github/workflows/ci.yml` runs clippy, tests, lint, build in parallel

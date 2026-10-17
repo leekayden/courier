@@ -19,7 +19,6 @@ import {
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { EventListPopover, type EventListPopoverState } from "./EventListPopover";
 import { EventChip } from "./EventChip";
-import { CalendarContextMenu, type CalendarContextMenuState } from "./CalendarContextMenu";
 import { cn } from "@/lib/utils";
 import type { CalendarEvent } from "@/types/calendar";
 
@@ -32,7 +31,6 @@ export function WeekView({ weekStartsOn, timeFormat }: WeekViewProps) {
   const selectedDate = useCalendarStore((s) => s.selectedDate);
   const setDate = useCalendarStore((s) => s.setDate);
   const selectEvent = useCalendarStore((s) => s.selectEvent);
-  const openEventForm = useCalendarStore((s) => s.openEventForm);
   const setViewMode = useCalendarStore((s) => s.setViewMode);
   const scrollRef = useRef<HTMLDivElement>(null);
   const WEEK_COL_CAP = 3;
@@ -99,17 +97,9 @@ export function WeekView({ weekStartsOn, timeFormat }: WeekViewProps) {
   }, [events, days]);
 
   const [overflowPopover, setOverflowPopover] = useState<EventListPopoverState | null>(null);
-  const [contextMenu, setContextMenu] = useState<CalendarContextMenuState | null>(null);
 
-  const handleEventContextMenu = (x: number, y: number, ev: CalendarEvent) => {
-    setContextMenu({ x, y, type: "event", eventId: ev.id, eventTitle: ev.title });
-  };
-
-  const handleTimeSlotClick = (day: Date, hour: number) => {
-    const d = new Date(day);
-    d.setHours(hour, 0, 0, 0);
-    setDate(d);
-    openEventForm();
+  const handleTimeSlotClick = (day: Date) => {
+    setDate(day);
   };
 
   const handleEventClick = (e: React.MouseEvent, eventId: string) => {
@@ -225,8 +215,7 @@ export function WeekView({ weekStartsOn, timeFormat }: WeekViewProps) {
               {hours.map((hour) => (
                 <div
                   key={hour}
-                  onClick={() => handleTimeSlotClick(day, hour)}
-                  onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, type: "slot", date: day, hour }); }}
+                  onClick={() => handleTimeSlotClick(day)}
                   className="h-[60px] cursor-pointer border-b border-border transition-colors hover:bg-accent/30"
                 />
               ))}
@@ -256,7 +245,6 @@ export function WeekView({ weekStartsOn, timeFormat }: WeekViewProps) {
                           key={event.id}
                           event={event}
                           onClick={(e) => handleEventClick(e, event.id)}
-                          onContextMenu={handleEventContextMenu}
                           className={cn(
                             "absolute overflow-hidden rounded px-1 py-0.5 text-left text-[10px] leading-tight",
                             colors.bg,
@@ -304,12 +292,6 @@ export function WeekView({ weekStartsOn, timeFormat }: WeekViewProps) {
       <EventListPopover
         state={overflowPopover}
         onClose={() => setOverflowPopover(null)}
-        timeFormat={timeFormat}
-        onEventContextMenu={handleEventContextMenu}
-      />
-      <CalendarContextMenu
-        state={contextMenu}
-        onClose={() => setContextMenu(null)}
         timeFormat={timeFormat}
       />
     </div>

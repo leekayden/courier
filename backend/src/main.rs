@@ -139,6 +139,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the passkey service (disabled when RP_ID / RP_ORIGIN are not set).
     let passkey_service = Arc::new(PasskeyService::from_config(&config)?);
 
+    // Calendar sync manager (throttling, Google token cache, OAuth state signing).
+    let calendar_sync = Arc::new(calendar::sync::CalendarSyncManager::new(&config.data_dir)?);
+
     // Spawn background task to purge stale pending ceremonies every 5 minutes.
     {
         let pk_svc = Arc::clone(&passkey_service);
@@ -169,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         link_proxy_secret,
         draft_locks: Arc::new(routes::drafts::DraftLocks::new()),
         db_pool_manager,
+        calendar_sync,
     });
 
     // Bind to the configured host and port.

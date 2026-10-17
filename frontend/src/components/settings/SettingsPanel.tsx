@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
 import { createFadeSlideVariants } from "@/lib/motion/variants";
 import { getMotionTokens } from "@/lib/motion/config";
 import { DisplaySettings } from "./DisplaySettings";
+import { CalendarAccountsSettings } from "./CalendarAccountsSettings";
 import { IdentitySettings } from "./IdentitySettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { VacationSettings } from "./VacationSettings";
@@ -17,10 +18,11 @@ import { SecuritySettings } from "./SecuritySettings";
 import { PgpSettings } from "./PgpSettings";
 import { useServerCapability } from "@/hooks/usePgp";
 
-type Tab = "display" | "notifications" | "identities" | "vacation" | "filters" | "security" | "pgp";
+type Tab = "display" | "calendar" | "notifications" | "identities" | "vacation" | "filters" | "security" | "pgp";
 
 const BASE_TABS: { id: Tab; label: string }[] = [
   { id: "display", label: "Display" },
+  { id: "calendar", label: "Calendar" },
   { id: "notifications", label: "Notifications" },
   { id: "identities", label: "Identities" },
   { id: "vacation", label: "Vacation" },
@@ -30,10 +32,24 @@ const BASE_TABS: { id: Tab; label: string }[] = [
 
 export function SettingsPanel() {
   const setViewMode = useUiStore((s) => s.setViewMode);
+  const setPendingSettingsTab = useUiStore((s) => s.setPendingSettingsTab);
   const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
-  const [activeTab, setActiveTab] = useState<Tab>("display");
   const pgpEnabled = useServerCapability("pgp");
   const TABS = pgpEnabled ? [...BASE_TABS, { id: "pgp" as Tab, label: "PGP Keys" }] : BASE_TABS;
+
+  // Deep-link support: other views (e.g. the disabled calendar empty state)
+  // queue a tab to open; consume it once when the panel mounts. Reading the
+  // store in the initializer (instead of an effect) avoids a cascading render.
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const pending = useUiStore.getState().pendingSettingsTab;
+    if (pending === "pgp" && !pgpEnabled) return "display";
+    return BASE_TABS.some((t) => t.id === pending) ? (pending as Tab) : "display";
+  });
+
+  useEffect(() => {
+    setPendingSettingsTab(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const shouldAnimate = effectiveAnimationMode !== "off";
   const tokens = getMotionTokens(effectiveAnimationMode);
@@ -53,7 +69,7 @@ export function SettingsPanel() {
           </button>
           <h1 className="text-lg font-semibold">Settings</h1>
         </div>
-        <div className="flex gap-1" role="tablist">
+        <div className="flex gap-1 overflow-x-auto" role="tablist">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -62,7 +78,7 @@ export function SettingsPanel() {
               aria-selected={activeTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                "relative px-3 py-2 text-sm font-medium transition-colors",
+                "relative shrink-0 px-3 py-2 text-sm font-medium transition-colors",
                 activeTab === tab.id
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground",
@@ -94,6 +110,7 @@ export function SettingsPanel() {
             className="h-full"
           >
             {activeTab === "display" && <DisplaySettings />}
+            {activeTab === "calendar" && <CalendarAccountsSettings />}
             {activeTab === "notifications" && <NotificationSettings />}
             {activeTab === "identities" && <IdentitySettings />}
             {activeTab === "vacation" && <VacationSettings />}

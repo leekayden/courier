@@ -5,13 +5,13 @@ import { AnimatePresence, animate } from "framer-motion";
 import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
 import { useCalendarStore } from "@/stores/useCalendarStore";
 import { useUiStore } from "@/stores/useUiStore";
-import { useCalendarSettings } from "@/hooks/useCalendar";
+import { useCalendarSettings, useCalendarStatus } from "@/hooks/useCalendar";
 import { useCalendarNavigation } from "@/hooks/useCalendarNavigation";
 import { CalendarHeader } from "./CalendarHeader";
+import { CalendarNotConfigured } from "./CalendarNotConfigured";
 import { MonthView } from "./MonthView";
 import { WeekView } from "./WeekView";
 import { DayView } from "./DayView";
-import { EventForm } from "./EventForm";
 import { EventDetail } from "./EventDetail";
 import { createFadeSlideVariants } from "@/lib/motion/variants";
 import { getMotionTokens } from "@/lib/motion/config";
@@ -25,6 +25,7 @@ export function CalendarPanel() {
   const setDate = useCalendarStore((s) => s.setDate);
   const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
   const panelTransition = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "x"), [effectiveAnimationMode]);
+  const { data: status, isLoading: statusLoading } = useCalendarStatus();
   const { data: settings } = useCalendarSettings();
   const { goPrev, goNext } = useCalendarNavigation();
 
@@ -112,6 +113,29 @@ export function CalendarPanel() {
     }
   }, [handlePrev, handleNext]);
 
+  // The calendar stays disabled until a provider account is configured.
+  if (statusLoading) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <div className="size-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+      </div>
+    );
+  }
+  if (status && !status.configured) {
+    return (
+      <AnimatedDiv
+        data-testid="calendar-panel-transition"
+        variants={panelTransition}
+        initial={panelTransition.initial}
+        animate={panelTransition.animate}
+        exit={panelTransition.exit}
+        className="flex h-full min-w-0 flex-1 flex-col"
+      >
+        <CalendarNotConfigured googleOAuthEnabled={status.google_oauth_enabled} />
+      </AnimatedDiv>
+    );
+  }
+
   return (
     <AnimatedDiv
       data-testid="calendar-panel-transition"
@@ -170,7 +194,6 @@ export function CalendarPanel() {
         </AnimatePresence>
       </div>
 
-      <EventForm />
       <EventDetail timeFormat={timeFormat} />
     </AnimatedDiv>
   );

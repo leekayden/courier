@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useEffect, useState } from "react";
+import { Circle, CircleDashed } from "lucide-react";
 import { useCalendarStore } from "@/stores/useCalendarStore";
 import { useCalendarEvents } from "@/hooks/useCalendar";
 import {
@@ -14,7 +15,6 @@ import {
 } from "./calendarUtils";
 import { EventListPopover, type EventListPopoverState } from "./EventListPopover";
 import { EventChip } from "./EventChip";
-import { CalendarContextMenu, type CalendarContextMenuState } from "./CalendarContextMenu";
 import { cn } from "@/lib/utils";
 import type { CalendarEvent } from "@/types/calendar";
 
@@ -26,7 +26,6 @@ export function DayView({ timeFormat }: DayViewProps) {
   const selectedDate = useCalendarStore((s) => s.selectedDate);
   const setDate = useCalendarStore((s) => s.setDate);
   const selectEvent = useCalendarStore((s) => s.selectEvent);
-  const openEventForm = useCalendarStore((s) => s.openEventForm);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const range = useMemo(
@@ -35,6 +34,7 @@ export function DayView({ timeFormat }: DayViewProps) {
   );
   const { data } = useCalendarEvents(range.start, range.end);
   const events = useMemo(() => data?.events ?? [], [data]);
+  const todos = useMemo(() => data?.todos ?? [], [data]);
 
   const hours = getHours();
 
@@ -60,11 +60,50 @@ export function DayView({ timeFormat }: DayViewProps) {
     return { allDayEvents: allDay, timedEvents: timed };
   }, [events]);
 
+  // Tasks for the selected day: due today first, then overdue, then undated.
+  // Completed tasks collapse into a single line.
+  const { openTasks, completedCount } = useMemo(() => {
+    const dayStart = new Date(selectedDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(selectedDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const dueToday: CalendarEvent[] = [];
+    const overdue: CalendarEvent[] = [];
+    const undated: CalendarEvent[] = [];
+    let completed = 0;
+
+    for (const todo of todos) {
+      if (todo.status === "completed" || todo.completed_at) {
+        completed += 1;
+        continue;
+      }
+      if (!todo.end_time) {
+        undated.push(todo);
+        continue;
+      }
+      const due = new Date(todo.end_time);
+      if (Number.isNaN(due.getTime()) || due > dayEnd) continue;
+      if (due >= dayStart) {
+        dueToday.push(todo);
+      } else {
+        overdue.push(todo);
+      }
+    }
+
+    const byDue = (a: CalendarEvent, b: CalendarEvent) =>
+      (a.end_time || "").localeCompare(b.end_time || "");
+
+    return {
+      openTasks: [...dueToday.sort(byDue), ...overdue.sort(byDue), ...undated],
+      completedCount: completed,
+    };
+  }, [todos, selectedDate]);
+
   const handleTimeSlotClick = (hour: number) => {
     const d = new Date(selectedDate);
     d.setHours(hour, 0, 0, 0);
     setDate(d);
-    openEventForm();
   };
 
   const handleEventClick = (e: React.MouseEvent, eventId: string) => {
@@ -74,11 +113,6 @@ export function DayView({ timeFormat }: DayViewProps) {
 
   const DAY_COL_CAP = 5;
   const [overflowPopover, setOverflowPopover] = useState<EventListPopoverState | null>(null);
-  const [contextMenu, setContextMenu] = useState<CalendarContextMenuState | null>(null);
-
-  const handleEventContextMenu = (x: number, y: number, ev: CalendarEvent) => {
-    setContextMenu({ x, y, type: "event", eventId: ev.id, eventTitle: ev.title });
-  };
 
   const [currentMinutes, setCurrentMinutes] = useState(() => {
     const now = new Date();
@@ -125,7 +159,7 @@ export function DayView({ timeFormat }: DayViewProps) {
       )}
 
       {/* Time grid */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="relative flex">
           {/* Time labels */}
           <div className="w-[60px] shrink-0 border-r border-border">
@@ -151,7 +185,6 @@ export function DayView({ timeFormat }: DayViewProps) {
               <div
                 key={hour}
                 onClick={() => handleTimeSlotClick(hour)}
-                onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, type: "slot", date: selectedDate, hour }); }}
                 className="h-[60px] cursor-pointer border-b border-border transition-colors hover:bg-accent/30"
               />
             ))}
@@ -181,7 +214,6 @@ export function DayView({ timeFormat }: DayViewProps) {
                         key={event.id}
                         event={event}
                         onClick={(e) => handleEventClick(e, event.id)}
-                        onContextMenu={handleEventContextMenu}
                         className={cn(
                           "absolute overflow-hidden rounded px-2 py-1 text-left text-xs leading-tight",
                           colors.bg,
@@ -231,15 +263,67 @@ export function DayView({ timeFormat }: DayViewProps) {
         </div>
       </div>
 
+      {/* Tasks (VTODOs / Google Tasks) - read-only */}
+      <div className="max-h-[30%] shrink-0 overflow-y-auto border-t border-border" data-testid="day-view-tasks">
+        <div className="flex items-center justify-between px-3 py-1.5">
+          <span className="text-xs font-semibold text-foreground">
+            Tasks
+          </span>
+          {completedCount > 0 && (
+            <span className="text-[10px] text-muted-foreground">
+              {completedCount} completed
+            </span>
+          )}
+        </div>
+        {openTasks.length === 0 ? (
+          <div className="px-3 pb-2 text-xs text-muted-foreground">
+            No open tasks.
+          </div>
+        ) : (
+          <div className="pb-1">
+            {openTasks.map((todo) => {
+              const isOverdue =
+                !!todo.end_time
+                && new Date(todo.end_time) < new Date()
+                && todo.status !== "completed"
+                && !todo.completed_at;
+              return (
+                <button
+                  key={todo.id}
+                  type="button"
+                  onClick={(e) => handleEventClick(e, todo.id)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-accent"
+                >
+                  <Circle className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                    {todo.title}
+                  </span>
+                  {todo.end_time ? (
+                    <span
+                      className={cn(
+                        "shrink-0 text-[10px]",
+                        isOverdue ? "text-destructive" : "text-muted-foreground",
+                      )}
+                    >
+                      {new Date(todo.end_time).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })}{" "}
+                      {formatTime(todo.end_time, timeFormat)}
+                    </span>
+                  ) : (
+                    <CircleDashed className="size-3 shrink-0 text-muted-foreground/40" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <EventListPopover
         state={overflowPopover}
         onClose={() => setOverflowPopover(null)}
-        timeFormat={timeFormat}
-        onEventContextMenu={handleEventContextMenu}
-      />
-      <CalendarContextMenu
-        state={contextMenu}
-        onClose={() => setContextMenu(null)}
         timeFormat={timeFormat}
       />
     </div>

@@ -9,15 +9,16 @@ import {
   Clock,
   Users,
   Video,
-  Pencil,
-  Trash2,
+  CalendarDays,
   ExternalLink,
+  ListTodo,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/Chip";
 import { useCalendarStore } from "@/stores/useCalendarStore";
 import { useUiStore } from "@/stores/useUiStore";
-import { useCalendarEvent, useDeleteEvent } from "@/hooks/useCalendar";
+import { useCalendarEvent } from "@/hooks/useCalendar";
 import { formatTime, getEventColorClasses } from "./calendarUtils";
 import { createFadeSlideVariants, createScaleFadeVariants } from "@/lib/motion/variants";
 import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
@@ -31,44 +32,23 @@ type EventDetailProps = {
 export function EventDetail({ timeFormat }: EventDetailProps) {
   const selectedEvent = useCalendarStore((s) => s.selectedEvent);
   const selectEvent = useCalendarStore((s) => s.selectEvent);
-  const openEventForm = useCalendarStore((s) => s.openEventForm);
   const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
   const overlayMotionProps = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "y"), [effectiveAnimationMode]);
   const contentMotionProps = useMemo(() => createScaleFadeVariants(effectiveAnimationMode), [effectiveAnimationMode]);
-  const deleteConfirmMotion = useMemo(() => createScaleFadeVariants(effectiveAnimationMode), [effectiveAnimationMode]);
 
   const { data: event } = useCalendarEvent(selectedEvent);
-  const deleteEvent = useDeleteEvent();
-
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const deleteConfirmRef = useRef<HTMLDivElement>(null);
 
   // Close on Escape
   useEffect(() => {
     if (!selectedEvent) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        if (deleteConfirmOpen) {
-          setDeleteConfirmOpen(false);
-        } else {
-          selectEvent(null);
-        }
+        selectEvent(null);
       }
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [selectedEvent, selectEvent, deleteConfirmOpen]);
-
-  useEffect(() => {
-    if (!deleteConfirmOpen) return;
-    function handleClick(e: MouseEvent) {
-      if (deleteConfirmRef.current && !deleteConfirmRef.current.contains(e.target as Node)) {
-        setDeleteConfirmOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [deleteConfirmOpen]);
+  }, [selectedEvent, selectEvent]);
 
   const attendees = useMemo(() => {
     if (!event) return [];
@@ -80,11 +60,7 @@ export function EventDetail({ timeFormat }: EventDetailProps) {
     }
   }, [event]);
 
-  const handleEdit = () => {
-    if (!event) return;
-    selectEvent(null);
-    openEventForm(event.id);
-  };
+  const isTodo = event?.item_kind === "todo";
 
   const formatDateRange = () => {
     if (!event) return "";
@@ -97,13 +73,27 @@ export function EventDetail({ timeFormat }: EventDetailProps) {
     }
     const start = new Date(event.start_time);
     const dateStr = start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    if (!event.end_time || event.end_time === event.start_time) {
+      return `${dateStr}, ${formatTime(event.start_time, timeFormat)}`;
+    }
     return `${dateStr}, ${formatTime(event.start_time, timeFormat)} - ${formatTime(event.end_time, timeFormat)}`;
+  };
+
+  const formatDue = () => {
+    if (!event?.end_time) return "No due date";
+    const due = new Date(event.end_time);
+    if (Number.isNaN(due.getTime())) return "No due date";
+    const dateStr = due.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    if (event.end_time.length === 10) return dateStr;
+    return `${dateStr}, ${formatTime(event.end_time, timeFormat)}`;
   };
 
   if (typeof document === "undefined") return null;
 
   const isOpen = !!(selectedEvent && event);
   const colors = event ? getEventColorClasses(event.color) : null;
+  const overdue = isTodo && event && event.end_time && !event.completed_at
+    && new Date(event.end_time) < new Date();
 
   return createPortal(
     <AnimatePresence>
@@ -134,6 +124,7 @@ export function EventDetail({ timeFormat }: EventDetailProps) {
               {/* Header */}
               <div className="mb-3 flex items-start justify-between">
                 <h2 className="line-clamp-2 pr-8 text-lg font-semibold text-foreground">
+                  {isTodo && <ListTodo className="mr-1.5 mb-0.5 inline size-4 text-muted-foreground" />}
                   {event!.title}
                 </h2>
                 <Button
@@ -148,11 +139,23 @@ export function EventDetail({ timeFormat }: EventDetailProps) {
 
               {/* Details */}
               <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm text-foreground">
-                  <Clock className="size-4 shrink-0 text-muted-foreground" />
-                  <span>{formatDateRange()}</span>
-                  {event!.all_day && <Chip variant="muted">All day</Chip>}
-                </div>
+                {isTodo ? (
+                  <div className="flex items-center gap-2 text-sm text-foreground">
+                    <Clock className="size-4 shrink-0 text-muted-foreground" />
+                    <span>{formatDue()}</span>
+                    {event!.completed_at && <Chip variant="muted">Completed</Chip>}
+                    {overdue && <Chip variant="muted">Overdue</Chip>}
+                    {event!.percent_complete !== null && event!.percent_complete! > 0 && (
+                      <Chip variant="muted">{event!.percent_complete}%</Chip>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-foreground">
+                    <Clock className="size-4 shrink-0 text-muted-foreground" />
+                    <span>{formatDateRange()}</span>
+                    {event!.all_day && <Chip variant="muted">All day</Chip>}
+                  </div>
+                )}
 
                 {event!.location && (
                   <div className="flex items-start gap-2 text-sm text-foreground">
@@ -170,7 +173,7 @@ export function EventDetail({ timeFormat }: EventDetailProps) {
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 truncate text-primary hover:underline"
                     >
-                      Join Meeting
+                      {isTodo ? "Open link" : "Join Meeting"}
                       <ExternalLink className="size-3 shrink-0" />
                     </a>
                   </div>
@@ -199,58 +202,17 @@ export function EventDetail({ timeFormat }: EventDetailProps) {
                   </div>
                 )}
 
-                {event!.source !== "manual" && (
-                  <div className="text-xs text-muted-foreground">
-                    Source: {event!.source}
-                  </div>
-                )}
-              </div>
-
-              {/* Actions */}
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={handleEdit} className="gap-1.5">
-                  <Pencil className="size-3.5" />
-                  Edit
-                </Button>
-                <div ref={deleteConfirmRef} className="relative">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => setDeleteConfirmOpen((v) => !v)}
-                    className="gap-1.5"
-                  >
-                    <Trash2 className="size-3.5" />
-                    Delete
-                  </Button>
-                  <AnimatePresence>
-                    {deleteConfirmOpen && (
-                      <AnimatedDiv
-                        variants={deleteConfirmMotion}
-                        initial="initial"
-                        animate="animate"
-                        exit="exit"
-                        className="absolute bottom-full right-0 z-20 mb-1 w-52 rounded-lg border border-border bg-background p-3 shadow-lg"
-                      >
-                        <p className="mb-3 text-sm font-medium text-foreground">Delete this event?</p>
-                        <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setDeleteConfirmOpen(false)}>
-                            Cancel
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            disabled={deleteEvent.isPending}
-                            onClick={() => {
-                              deleteEvent.mutate(event!.id, { onSuccess: () => selectEvent(null) });
-                              setDeleteConfirmOpen(false);
-                            }}
-                          >
-                            {deleteEvent.isPending ? "Deleting..." : "Delete"}
-                          </Button>
-                        </div>
-                      </AnimatedDiv>
-                    )}
-                  </AnimatePresence>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  {event!.account_name && (
+                    <span className="inline-flex items-center gap-1">
+                      <CalendarDays className="size-3" />
+                      {event!.account_name}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1">
+                    <Lock className="size-3" />
+                    Read-only
+                  </span>
                 </div>
               </div>
             </div>

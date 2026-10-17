@@ -5,13 +5,33 @@ import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import type {
   CalendarEvent,
   CalendarEventsResponse,
+  CalendarStatus,
   CalendarSettings,
-  CreateEventRequest,
-  UpdateEventRequest,
+  CalendarAccount,
+  CalendarAccountSummary,
+  CreateCalendarAccountRequest,
+  UpdateCalendarAccountRequest,
+  CalDavCollection,
   MeetingTemplate,
   MeetingTemplatesResponse,
 } from "@/types/calendar";
 
+/**
+ * Whether the calendar is configured. The calendar stays disabled until the
+ * user sets up a provider account (or has legacy local events).
+ */
+export function useCalendarStatus() {
+  return useQuery({
+    queryKey: ["calendar-status"],
+    queryFn: () => apiGet<CalendarStatus>("/calendar/status"),
+  });
+}
+
+/**
+ * Events + todos for a time range. The backend syncs configured provider
+ * accounts (CalDAV / Google) into the cache before responding; serving is
+ * read-only.
+ */
 export function useCalendarEvents(start: string, end: string) {
   return useQuery({
     queryKey: ["calendar-events", start, end],
@@ -31,44 +51,84 @@ export function useCalendarEvent(id: string | null) {
   });
 }
 
-export function useCreateEvent() {
+// ---------------------------------------------------------------------------
+// Provider accounts
+// ---------------------------------------------------------------------------
+
+export function useCalendarAccounts() {
+  return useQuery({
+    queryKey: ["calendar-accounts"],
+    queryFn: () =>
+      apiGet<{ accounts: CalendarAccount[] }>("/calendar/accounts"),
+  });
+}
+
+function invalidateCalendarData(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ["calendar-accounts"] });
+  queryClient.invalidateQueries({ queryKey: ["calendar-status"] });
+  queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
+}
+
+export function useCreateCalendarAccount() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreateEventRequest) =>
-      apiPost<CalendarEvent>(
-        "/calendar/events",
-        body as unknown as Record<string, unknown>,
-      ),
+    mutationFn: (body: CreateCalendarAccountRequest) =>
+      apiPost<CalendarAccount>("/calendar/accounts", body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
+      invalidateCalendarData(queryClient);
     },
   });
 }
 
-export function useUpdateEvent() {
+export function useUpdateCalendarAccount() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: UpdateEventRequest & { id: string }) =>
-      apiPut<CalendarEvent>(
-        `/calendar/events/${id}`,
-        body as unknown as Record<string, unknown>,
-      ),
+    mutationFn: ({ id, ...body }: UpdateCalendarAccountRequest & { id: number }) =>
+      apiPut<CalendarAccount>(`/calendar/accounts/${id}`, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
-      queryClient.invalidateQueries({ queryKey: ["calendar-event"] });
+      invalidateCalendarData(queryClient);
     },
   });
 }
 
-export function useDeleteEvent() {
+export function useDeleteCalendarAccount() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiDelete(`/calendar/events/${id}`),
+    mutationFn: (id: number) => apiDelete(`/calendar/accounts/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
+      invalidateCalendarData(queryClient);
     },
   });
 }
+
+/** Probe a CalDAV URL and list the calendar collections it exposes. */
+export function useCalDavDiscover() {
+  return useMutation({
+    mutationFn: (body: { url: string; username: string; secret: string }) =>
+      apiPost<{ collections: CalDavCollection[] }>(
+        "/calendar/caldav/discover",
+        body,
+      ),
+  });
+}
+
+/** Whether the server has Google OAuth credentials configured. */
+export function useGoogleOAuthStatus() {
+  return useQuery({
+    queryKey: ["calendar-google-status"],
+    queryFn: () =>
+      apiGet<{ google_oauth_enabled: boolean }>("/calendar/google/status"),
+  });
+}
+
+/** Fetch the Google consent URL. Returns it so the caller can redirect. */
+export async function fetchGoogleAuthUrl(): Promise<{ url: string }> {
+  return apiGet<{ url: string }>("/calendar/google/auth-url");
+}
+
+// ---------------------------------------------------------------------------
+// Settings (display preferences) + meeting templates
+// ---------------------------------------------------------------------------
 
 export function useCalendarSettings() {
   return useQuery({
@@ -127,3 +187,5 @@ export function useDeleteMeetingTemplate() {
     },
   });
 }
+
+export type { CalendarAccountSummary };

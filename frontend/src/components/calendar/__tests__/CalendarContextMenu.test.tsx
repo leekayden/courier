@@ -8,18 +8,12 @@ vi.mock("framer-motion", () => ({
   motion: { div: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div> },
 }));
 
-const { mockCalendarState, mockUiState, mockDeleteEvent } = vi.hoisted(() => ({
+const { mockCalendarState, mockUiState } = vi.hoisted(() => ({
   mockCalendarState: {
-    openEventForm: vi.fn(),
     setDate: vi.fn(),
-    selectEvent: vi.fn(),
   },
   mockUiState: {
     effectiveAnimationMode: "off" as "rich" | "medium" | "subtle" | "off",
-  },
-  mockDeleteEvent: {
-    isPending: false,
-    mutate: vi.fn(),
   },
 }));
 
@@ -31,10 +25,6 @@ vi.mock("@/stores/useUiStore", () => ({
   useUiStore: (selector: (s: typeof mockUiState) => unknown) => selector(mockUiState),
 }));
 
-vi.mock("@/hooks/useCalendar", () => ({
-  useDeleteEvent: () => mockDeleteEvent,
-}));
-
 vi.mock("@/lib/motion/AnimatedDiv", () => ({
   AnimatedDiv: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement> & { variants?: unknown; initial?: unknown; animate?: unknown; exit?: unknown }) => (
     <div {...(props as React.HTMLAttributes<HTMLDivElement>)}>{children}</div>
@@ -43,99 +33,64 @@ vi.mock("@/lib/motion/AnimatedDiv", () => ({
 
 import { CalendarContextMenu } from "../CalendarContextMenu";
 
-function makeEventState(overrides?: Partial<Extract<CalendarContextMenuState, { type: "event" }>>): CalendarContextMenuState {
-  return { x: 100, y: 100, type: "event", eventId: "ev-1", eventTitle: "My Meeting", ...overrides };
+function makeDayState(overrides?: Partial<Extract<CalendarContextMenuState, { type: "day" }>>): CalendarContextMenuState {
+  return { x: 100, y: 100, type: "day", date: new Date(2026, 2, 6), ...overrides };
 }
 
-describe("CalendarContextMenu", () => {
+describe("CalendarContextMenu (read-only)", () => {
   beforeEach(() => {
-    mockCalendarState.openEventForm.mockClear();
     mockCalendarState.setDate.mockClear();
-    mockCalendarState.selectEvent.mockClear();
-    mockDeleteEvent.mutate.mockClear();
-    mockDeleteEvent.isPending = false;
   });
 
   it("renders nothing when state is null", () => {
-    const { container } = render(<CalendarContextMenu state={null} onClose={vi.fn()} timeFormat="12h" />);
+    const { container } = render(<CalendarContextMenu state={null} onClose={vi.fn()} />);
     expect(container.querySelector(".fixed")).toBeNull();
   });
 
-  it("renders Edit and Delete for event type", () => {
-    render(<CalendarContextMenu state={makeEventState()} onClose={vi.fn()} timeFormat="12h" />);
-    expect(screen.getByText("Edit")).toBeTruthy();
-    expect(screen.getByText("Delete")).toBeTruthy();
+  it("renders nothing without an onAddSticker handler (no mutating actions)", () => {
+    const { container } = render(<CalendarContextMenu state={makeDayState()} onClose={vi.fn()} />);
+    expect(container.querySelector(".fixed")).toBeNull();
   });
 
-  it("Edit click opens event form and closes", () => {
+  it("offers no Edit/Delete/New-event actions", () => {
+    render(
+      <CalendarContextMenu
+        state={makeDayState()}
+        onClose={vi.fn()}
+        onAddSticker={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Edit")).toBeNull();
+    expect(screen.queryByText("Delete")).toBeNull();
+    expect(screen.queryByText(/New event/i)).toBeNull();
+  });
+
+  it("shows the sticker action for day cells", () => {
+    const onAddSticker = vi.fn();
+    render(
+      <CalendarContextMenu
+        state={makeDayState()}
+        onClose={vi.fn()}
+        onAddSticker={onAddSticker}
+      />,
+    );
+    expect(screen.getByText(/Add sticker on Mar 6/)).toBeTruthy();
+  });
+
+  it("clicking the sticker action invokes the handler and closes", () => {
+    const onAddSticker = vi.fn();
     const onClose = vi.fn();
-    render(<CalendarContextMenu state={makeEventState()} onClose={onClose} timeFormat="12h" />);
-    fireEvent.click(screen.getByText("Edit"));
-    expect(mockCalendarState.openEventForm).toHaveBeenCalledWith("ev-1");
+    const state = makeDayState();
+    render(
+      <CalendarContextMenu
+        state={state}
+        onClose={onClose}
+        onAddSticker={onAddSticker}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Add sticker/));
+    expect(onAddSticker).toHaveBeenCalledWith(state.date);
+    expect(mockCalendarState.setDate).toHaveBeenCalledWith(state.date);
     expect(onClose).toHaveBeenCalled();
-  });
-
-  it("Delete click shows confirmation step", () => {
-    render(<CalendarContextMenu state={makeEventState()} onClose={vi.fn()} timeFormat="12h" />);
-    fireEvent.click(screen.getByText("Delete"));
-    expect(screen.getByText(/Delete "My Meeting"\?/)).toBeTruthy();
-    expect(screen.getByText("Cancel")).toBeTruthy();
-  });
-
-  it("Cancel in confirm step returns to main menu", () => {
-    render(<CalendarContextMenu state={makeEventState()} onClose={vi.fn()} timeFormat="12h" />);
-    fireEvent.click(screen.getByText("Delete"));
-    fireEvent.click(screen.getByText("Cancel"));
-    expect(screen.getByText("Edit")).toBeTruthy();
-  });
-
-  it("Confirm delete calls deleteEvent.mutate", () => {
-    render(<CalendarContextMenu state={makeEventState()} onClose={vi.fn()} timeFormat="12h" />);
-    fireEvent.click(screen.getByText("Delete"));
-    // Two delete buttons - first is the initial "Delete", second is confirm "Delete"
-    const deleteButtons = screen.getAllByText("Delete");
-    fireEvent.click(deleteButtons[deleteButtons.length - 1]);
-    expect(mockDeleteEvent.mutate).toHaveBeenCalledWith("ev-1", expect.any(Object));
-  });
-
-  it("Escape in confirm step goes back to main menu without closing", () => {
-    const onClose = vi.fn();
-    render(<CalendarContextMenu state={makeEventState()} onClose={onClose} timeFormat="12h" />);
-    fireEvent.click(screen.getByText("Delete"));
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.getByText("Edit")).toBeTruthy();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it("Escape at main menu level calls onClose", () => {
-    const onClose = vi.fn();
-    render(<CalendarContextMenu state={makeEventState()} onClose={onClose} timeFormat="12h" />);
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("renders slot menu with time label", () => {
-    const state: CalendarContextMenuState = { x: 0, y: 0, type: "slot", date: new Date("2026-06-15"), hour: 14 };
-    render(<CalendarContextMenu state={state} onClose={vi.fn()} timeFormat="12h" />);
-    expect(screen.getByText(/New event at/)).toBeTruthy();
-  });
-
-  it("slot click sets date with correct hour and opens form", () => {
-    const onClose = vi.fn();
-    const state: CalendarContextMenuState = { x: 0, y: 0, type: "slot", date: new Date("2026-06-15"), hour: 9 };
-    render(<CalendarContextMenu state={state} onClose={onClose} timeFormat="12h" />);
-    fireEvent.click(screen.getByText(/New event at/));
-    expect(mockCalendarState.setDate).toHaveBeenCalled();
-    const d = mockCalendarState.setDate.mock.calls[0][0] as Date;
-    expect(d.getHours()).toBe(9);
-    expect(mockCalendarState.openEventForm).toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("renders day menu with date label", () => {
-    const state: CalendarContextMenuState = { x: 0, y: 0, type: "day", date: new Date("2026-06-15") };
-    render(<CalendarContextMenu state={state} onClose={vi.fn()} timeFormat="12h" />);
-    expect(screen.getByText(/New event on/)).toBeTruthy();
-    expect(screen.getByText(/Jun 15/)).toBeTruthy();
   });
 });

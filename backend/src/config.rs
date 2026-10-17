@@ -139,6 +139,15 @@ pub struct AppConfig {
     /// When exceeded, the least-recently-used pool is evicted to make room.
     #[serde(default = "default_db_pool_max_users")]
     pub db_pool_max_users: usize,
+
+    /// Google OAuth client ID for the calendar integration. When set (with
+    /// google_client_secret), users can connect Google Calendars read-only.
+    #[serde(default)]
+    pub google_client_id: Option<String>,
+
+    /// Google OAuth client secret. Never exposed to the frontend.
+    #[serde(default)]
+    pub google_client_secret: Option<String>,
 }
 
 fn default_pgp_enabled() -> bool {

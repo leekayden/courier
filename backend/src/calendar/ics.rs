@@ -2,113 +2,168 @@ use ical::parser::ical::component::IcalCalendar;
 use ical::IcalParser;
 use std::io::BufReader;
 
-use crate::db::calendar::CreateEvent;
+use crate::db::calendar::{RemoteEvent, RemoteTodo};
 
-/// Parse iCalendar text and return a list of events ready for database insertion.
-pub fn parse_ics(ics_text: &str) -> Result<Vec<CreateEvent>, String> {
+/// Parse iCalendar text into remote events and todos ready for the cache.
+///
+/// Events without a DTSTART are skipped. Todos without a DTSTART or DUE are
+/// still kept (undated todos are legal in iCalendar and shown in the Tasks
+/// list). Datetimes are kept in their wire format: `Z`-suffixed UTC values
+/// stay UTC, TZID-qualified values keep their naive local representation.
+pub fn parse_ics_full(ics_text: &str) -> Result<(Vec<RemoteEvent>, Vec<RemoteTodo>), String> {
     let reader = BufReader::new(ics_text.as_bytes());
     let parser = IcalParser::new(reader);
 
     let mut events = Vec::new();
+    let mut todos = Vec::new();
 
     for calendar_result in parser {
         let calendar: IcalCalendar =
             calendar_result.map_err(|e| format!("Failed to parse ICS: {e}"))?;
 
         for vevent in calendar.events {
-            let mut title = String::new();
-            let mut description = String::new();
-            let mut location = String::new();
-            let mut start_time = String::new();
-            let mut end_time = String::new();
-            let mut all_day = false;
-            let mut uid = None;
-            let mut rrule = None;
-            let mut organizer = String::new();
-            let mut attendees: Vec<String> = Vec::new();
-            let mut url = None;
-
-            for prop in &vevent.properties {
-                let value = prop.value.as_deref().unwrap_or("");
-
-                match prop.name.as_str() {
-                    "SUMMARY" => {
-                        title = value.to_string();
-                    }
-                    "DESCRIPTION" => {
-                        description = value.to_string();
-                    }
-                    "LOCATION" => {
-                        location = value.to_string();
-                    }
-                    "DTSTART" => {
-                        let parsed = parse_ical_datetime(value, &prop.params);
-                        all_day = is_date_only(value);
-                        start_time = parsed;
-                    }
-                    "DTEND" => {
-                        end_time = parse_ical_datetime(value, &prop.params);
-                    }
-                    "UID" => {
-                        uid = Some(value.to_string());
-                    }
-                    "RRULE" => {
-                        rrule = Some(value.to_string());
-                    }
-                    "ORGANIZER" => {
-                        organizer = extract_email_from_cal_address(value);
-                    }
-                    "ATTENDEE" => {
-                        attendees.push(extract_email_from_cal_address(value));
-                    }
-                    "URL"
-                        if !value.is_empty() => {
-                            url = Some(value.to_string());
-                        }
-                    _ => {}
-                }
+            if let Some(event) = parse_vevent(&vevent.properties) {
+                events.push(event);
             }
+        }
 
-            if title.is_empty() {
-                title = "(No title)".to_string();
+        for vtodo in calendar.todos {
+            if let Some(todo) = parse_vtodo(&vtodo.properties) {
+                todos.push(todo);
             }
-
-            // If end_time is empty, default to start_time + 1 hour (or same day for all-day)
-            if end_time.is_empty() {
-                end_time = start_time.clone();
-            }
-
-            if start_time.is_empty() {
-                // Skip events without a start time
-                continue;
-            }
-
-            let attendees_json =
-                serde_json::to_string(&attendees).unwrap_or_else(|_| "[]".to_string());
-
-            events.push(CreateEvent {
-                title,
-                description,
-                location,
-                start_time,
-                end_time,
-                all_day,
-                recurrence_rule: rrule,
-                attendees: attendees_json,
-                organizer,
-                status: "confirmed".to_string(),
-                source: "ics".to_string(),
-                source_uid: uid,
-                source_message_uid: None,
-                source_message_folder: None,
-                meeting_url: url,
-                color: None,
-                reminder_minutes: None,
-            });
         }
     }
 
-    Ok(events)
+    Ok((events, todos))
+}
+
+type Props = Vec<ical::property::Property>;
+
+fn parse_vevent(props: &Props) -> Option<RemoteEvent> {
+    let mut title = String::new();
+    let mut description = String::new();
+    let mut location = String::new();
+    let mut start_time = String::new();
+    let mut end_time = String::new();
+    let mut all_day = false;
+    let mut uid = String::new();
+    let mut rrule = None;
+    let mut organizer = String::new();
+    let mut attendees: Vec<String> = Vec::new();
+    let mut url = None;
+    let mut status = "confirmed".to_string();
+
+    for prop in props {
+        let value = prop.value.as_deref().unwrap_or("");
+
+        match prop.name.as_str() {
+            "SUMMARY" => title = value.to_string(),
+            "DESCRIPTION" => description = value.to_string(),
+            "LOCATION" => location = value.to_string(),
+            "DTSTART" => {
+                all_day = is_date_only(value);
+                start_time = parse_ical_datetime(value, &prop.params);
+            }
+            "DTEND" => end_time = parse_ical_datetime(value, &prop.params),
+            "UID" => uid = value.to_string(),
+            "RRULE" => rrule = Some(value.to_string()),
+            "ORGANIZER" => organizer = extract_email_from_cal_address(value),
+            "ATTENDEE" => attendees.push(extract_email_from_cal_address(value)),
+            "URL" if !value.is_empty() => url = Some(value.to_string()),
+            "STATUS" if !value.is_empty() => status = value.to_lowercase(),
+            _ => {}
+        }
+    }
+
+    if start_time.is_empty() {
+        return None;
+    }
+    if title.is_empty() {
+        title = "(No title)".to_string();
+    }
+    if end_time.is_empty() {
+        end_time = start_time.clone();
+    }
+
+    let attendees_json =
+        serde_json::to_string(&attendees).unwrap_or_else(|_| "[]".to_string());
+
+    Some(RemoteEvent {
+        uid,
+        title,
+        description,
+        location,
+        start_time,
+        end_time,
+        all_day,
+        recurrence_rule: rrule.filter(|r| !r.is_empty()),
+        attendees: attendees_json,
+        organizer,
+        status,
+        meeting_url: url,
+        // Filled in by the provider with the resource href.
+        remote_href: String::new(),
+        remote_etag: None,
+    })
+}
+
+fn parse_vtodo(props: &Props) -> Option<RemoteTodo> {
+    let mut title = String::new();
+    let mut description = String::new();
+    let mut start_time = String::new();
+    let mut due_time = String::new();
+    let mut uid = String::new();
+    let mut url = None;
+    let mut status = "needs-action".to_string();
+    let mut completed = false;
+    let mut completed_at = None;
+    let mut percent_complete = None;
+    let mut priority = None;
+
+    for prop in props {
+        let value = prop.value.as_deref().unwrap_or("");
+
+        match prop.name.as_str() {
+            "SUMMARY" => title = value.to_string(),
+            "DESCRIPTION" => description = value.to_string(),
+            "DTSTART" => start_time = parse_ical_datetime(value, &prop.params),
+            "DUE" => due_time = parse_ical_datetime(value, &prop.params),
+            "UID" => uid = value.to_string(),
+            "URL" if !value.is_empty() => url = Some(value.to_string()),
+            "STATUS" if !value.is_empty() => {
+                status = value.to_lowercase();
+                completed = status == "completed";
+            }
+            "COMPLETED" if !value.is_empty() => {
+                completed_at = Some(parse_ical_datetime(value, &prop.params));
+                completed = true;
+            }
+            "PERCENT-COMPLETE" => percent_complete = value.parse().ok(),
+            "PRIORITY" => priority = value.parse().ok().filter(|p| *p > 0),
+            _ => {}
+        }
+    }
+
+    if title.is_empty() {
+        title = "(No title)".to_string();
+    }
+
+    Some(RemoteTodo {
+        uid,
+        title,
+        description,
+        start_time,
+        due_time,
+        status,
+        completed,
+        completed_at,
+        percent_complete,
+        priority,
+        url,
+        // Filled in by the provider with the resource href.
+        remote_href: String::new(),
+        remote_etag: None,
+    })
 }
 
 /// Check if a DTSTART/DTEND value is date-only (no time component).
@@ -199,12 +254,27 @@ ORGANIZER:mailto:boss@example.com
 ATTENDEE:mailto:alice@example.com
 ATTENDEE:mailto:bob@example.com
 URL:https://zoom.us/j/12345
+STATUS:CONFIRMED
 END:VEVENT
+BEGIN:VTODO
+UID:todo-1@example.com
+SUMMARY:Send invoice
+DUE:20250310T170000Z
+PRIORITY:5
+PERCENT-COMPLETE:40
+STATUS:NEEDS-ACTION
+END:VTODO
+BEGIN:VTODO
+UID:todo-2@example.com
+SUMMARY:Undated idea
+STATUS:COMPLETED
+COMPLETED:20250308T120000Z
+END:VTODO
 END:VCALENDAR"#;
 
     #[test]
-    fn test_parse_basic_event() {
-        let events = parse_ics(SAMPLE_ICS).unwrap();
+    fn test_parse_full_with_events_and_todos() {
+        let (events, todos) = parse_ics_full(SAMPLE_ICS).unwrap();
         assert_eq!(events.len(), 1);
 
         let event = &events[0];
@@ -215,17 +285,29 @@ END:VCALENDAR"#;
         assert_eq!(event.end_time, "2025-03-06T10:00:00Z");
         assert!(!event.all_day);
         assert_eq!(event.organizer, "boss@example.com");
-        assert_eq!(
-            event.source_uid.as_deref(),
-            Some("event-123@example.com")
-        );
+        assert_eq!(event.uid, "event-123@example.com");
         assert_eq!(event.meeting_url.as_deref(), Some("https://zoom.us/j/12345"));
-        assert_eq!(event.source, "ics");
+        assert_eq!(event.status, "confirmed");
 
         let attendees: Vec<String> = serde_json::from_str(&event.attendees).unwrap();
         assert_eq!(attendees.len(), 2);
         assert!(attendees.contains(&"alice@example.com".to_string()));
         assert!(attendees.contains(&"bob@example.com".to_string()));
+
+        assert_eq!(todos.len(), 2);
+
+        let invoice = &todos[0];
+        assert_eq!(invoice.title, "Send invoice");
+        assert_eq!(invoice.due_time, "2025-03-10T17:00:00Z");
+        assert_eq!(invoice.status, "needs-action");
+        assert!(!invoice.completed);
+        assert_eq!(invoice.percent_complete, Some(40));
+        assert_eq!(invoice.priority, Some(5));
+
+        let idea = &todos[1];
+        assert!(idea.due_time.is_empty(), "undated todos are kept");
+        assert!(idea.completed);
+        assert_eq!(idea.completed_at.as_deref(), Some("2025-03-08T12:00:00Z"));
     }
 
     #[test]
@@ -240,7 +322,8 @@ UID:allday-1@example.com
 END:VEVENT
 END:VCALENDAR"#;
 
-        let events = parse_ics(ics).unwrap();
+        let (events, todos) = parse_ics_full(ics).unwrap();
+        assert!(todos.is_empty());
         assert_eq!(events.len(), 1);
         assert!(events[0].all_day);
         assert_eq!(events[0].start_time, "2025-03-06");
@@ -248,7 +331,7 @@ END:VCALENDAR"#;
     }
 
     #[test]
-    fn test_parse_multiple_events() {
+    fn test_parse_multiple_events_and_rrule() {
         let ics = r#"BEGIN:VCALENDAR
 VERSION:2.0
 BEGIN:VEVENT
@@ -256,6 +339,7 @@ DTSTART:20250306T090000Z
 DTEND:20250306T100000Z
 SUMMARY:Event 1
 UID:e1@example.com
+RRULE:FREQ=WEEKLY;COUNT=3
 END:VEVENT
 BEGIN:VEVENT
 DTSTART:20250306T140000Z
@@ -265,10 +349,22 @@ UID:e2@example.com
 END:VEVENT
 END:VCALENDAR"#;
 
-        let events = parse_ics(ics).unwrap();
+        let (events, _) = parse_ics_full(ics).unwrap();
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].title, "Event 1");
-        assert_eq!(events[1].title, "Event 2");
+        assert_eq!(events[0].recurrence_rule.as_deref(), Some("FREQ=WEEKLY;COUNT=3"));
+    }
+
+    #[test]
+    fn test_event_without_dtstart_skipped() {
+        let ics = r#"BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+SUMMARY:No start
+UID:no-start@example.com
+END:VEVENT
+END:VCALENDAR"#;
+        let (events, _) = parse_ics_full(ics).unwrap();
+        assert!(events.is_empty());
     }
 
     #[test]

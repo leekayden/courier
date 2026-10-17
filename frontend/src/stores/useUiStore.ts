@@ -78,6 +78,8 @@ export interface UiState {
   readingBodyMode: "html" | "plain";
   /** Whether to show raw email headers. Resets when navigating to a new message. */
   readingShowHeaders: boolean;
+  /** Settings tab to open on the next navigation to the settings view. Consumed by SettingsPanel. */
+  pendingSettingsTab: string | null;
 
   setActiveTag: (tagId: string | null) => void;
   setActiveFolder: (folder: string) => void;
@@ -107,6 +109,8 @@ export interface UiState {
   setReadingBodyMode: (mode: "html" | "plain") => void;
   toggleReadingBodyMode: () => void;
   toggleReadingShowHeaders: () => void;
+  /** Queue a settings tab to activate on the next settings navigation. */
+  setPendingSettingsTab: (tab: string | null) => void;
 }
 
 const initial = loadSettings();
@@ -136,6 +140,7 @@ export const useUiStore: UseBoundStore<StoreApi<UiState>> = create<UiState>((set
   mobilePanelView: "list",
   readingBodyMode: "html",
   readingShowHeaders: false,
+  pendingSettingsTab: null,
 
   setActiveTag: (tagId) =>
     set({ activeTagId: tagId, selectedMessageUid: null, selectedMessageUids: [], bulkSelectMode: false, mobilePanelView: "list" }),
@@ -190,4 +195,5 @@ export const useUiStore: UseBoundStore<StoreApi<UiState>> = create<UiState>((set
     set((s) => ({ readingBodyMode: s.readingBodyMode === "html" ? "plain" : "html", readingShowHeaders: false })),
   toggleReadingShowHeaders: () =>
     set((s) => ({ readingShowHeaders: !s.readingShowHeaders })),
+  setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
 }));

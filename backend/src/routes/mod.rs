@@ -152,6 +152,7 @@ pub struct AppServices {
     pub link_proxy_secret: Option<Arc<LinkProxySecret>>,
     pub draft_locks: Arc<drafts::DraftLocks>,
     pub db_pool_manager: Arc<crate::db::pool::DbPoolManager>,
+    pub calendar_sync: Arc<crate::calendar::sync::CalendarSyncManager>,
 }
 
 /// Lets handlers take a single `AppServices` param instead of one `Extension<Arc<X>>`
@@ -198,6 +199,7 @@ where
                 .map(|Extension(v)| v),
             draft_locks: ext!(Arc<drafts::DraftLocks>),
             db_pool_manager: ext!(Arc<crate::db::pool::DbPoolManager>),
+            calendar_sync: ext!(Arc<crate::calendar::sync::CalendarSyncManager>),
         })
     }
 }
@@ -220,6 +222,7 @@ pub fn create_router(svc: AppServices) -> Router {
         link_proxy_secret,
         draft_locks,
         db_pool_manager,
+        calendar_sync,
     } = svc;
     let key_extractor = RealIpKeyExtractor {
         trusted: parse_trusted_proxies(&config.trusted_proxies),
@@ -417,19 +420,25 @@ pub fn create_router(svc: AppServices) -> Router {
                 .put(notification_preferences::update_notification_preferences),
         )
         .route(
+            "/calendar/status",
+            get(calendar::get_status),
+        )
+        .route(
             "/calendar/events",
-            get(calendar::list_events).post(calendar::create_event),
+            get(calendar::list_events),
+        )
+        .route("/calendar/events/{id}", get(calendar::get_event))
+        .route(
+            "/calendar/accounts",
+            get(calendar::list_accounts).post(calendar::create_account),
         )
         .route(
-            "/calendar/events/import-ics",
-            post(calendar::import_ics),
+            "/calendar/accounts/{id}",
+            put(calendar::update_account).delete(calendar::delete_account),
         )
-        .route(
-            "/calendar/events/{id}",
-            get(calendar::get_event)
-                .put(calendar::update_event)
-                .delete(calendar::delete_event),
-        )
+        .route("/calendar/caldav/discover", post(calendar::caldav_discover))
+        .route("/calendar/google/status", get(calendar::google_status))
+        .route("/calendar/google/auth-url", get(calendar::google_auth_url))
         .route(
             "/calendar/settings",
             get(calendar::get_calendar_settings)
@@ -472,6 +481,13 @@ pub fn create_router(svc: AppServices) -> Router {
     let ws_route = Router::new()
         .route("/ws", get(crate::realtime::ws::ws_handler));
 
+    // Google OAuth callback — a browser navigation from accounts.google.com.
+    // The session cookie is SameSite=Strict so it is absent on this cross-site
+    // request; identity comes from the signed OAuth state instead. Safe (GET)
+    // method only, so no CSRF check is needed.
+    let google_callback_route = Router::new()
+        .route("/calendar/google/callback", get(calendar::google_callback));
+
     #[cfg(feature = "stickers")]
     let sticker_routes = Router::new()
         .route("/calendar/stickers", get(stickers::list_stickers))
@@ -486,7 +502,8 @@ pub fn create_router(svc: AppServices) -> Router {
         .route("/health", get(health::health_check))
         .nest("/auth", auth_router)
         .merge(ws_route)
-        .merge(protected_data);
+        .merge(protected_data)
+        .merge(google_callback_route);
 
     #[cfg(feature = "stickers")]
     let api_router = api_router.merge(sticker_routes);
@@ -519,6 +536,7 @@ pub fn create_router(svc: AppServices) -> Router {
         .layer(Extension(passkey_service))
         .layer(Extension(draft_locks))
         .layer(Extension(db_pool_manager))
+        .layer(Extension(calendar_sync))
         .layer(Extension(config.clone()))
         .layer(TraceLayer::new_for_http());
 

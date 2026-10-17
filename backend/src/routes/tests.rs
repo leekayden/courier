@@ -47,6 +47,8 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            google_client_id: None,
+            google_client_secret: None,
         })
     }
 
@@ -80,6 +82,8 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            google_client_id: None,
+            google_client_secret: None,
         })
     }
 
@@ -113,6 +117,8 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            google_client_id: None,
+            google_client_secret: None,
         })
     }
 
@@ -224,6 +230,8 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            google_client_id: None,
+            google_client_secret: None,
         }).expect("test PasskeyService with WebAuthn"))
     }
 
@@ -257,6 +265,8 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            google_client_id: None,
+            google_client_secret: None,
         }).expect("test PasskeyService"))
     }
 
@@ -301,6 +311,10 @@
             link_proxy_secret: None,
             draft_locks: Arc::new(crate::routes::drafts::DraftLocks::new()),
             db_pool_manager,
+            calendar_sync: Arc::new(crate::calendar::sync::CalendarSyncManager::new(
+                "/tmp/rav-test",
+            )
+            .expect("test CalendarSyncManager")),
         }
     }
 

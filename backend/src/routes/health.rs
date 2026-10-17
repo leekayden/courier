@@ -73,6 +73,8 @@ mod tests {
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            google_client_id: None,
+            google_client_secret: None,
         });
         let store = Arc::new(SessionStore::new(Duration::from_secs(3600)));
         let transport = Arc::new(crate::mail_transport::MailTransport {
@@ -135,6 +137,10 @@ mod tests {
             passkey_service,
             link_proxy_secret: None,
             draft_locks: Arc::new(crate::routes::drafts::DraftLocks::new()),
+            calendar_sync: Arc::new(
+                crate::calendar::sync::CalendarSyncManager::new("/tmp/rav-test")
+                    .expect("test CalendarSyncManager"),
+            ),
         });
 
         let response = app

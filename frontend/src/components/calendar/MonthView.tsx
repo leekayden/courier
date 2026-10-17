@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Circle } from "lucide-react";
 import { useCalendarStore } from "@/stores/useCalendarStore";
 import { useCalendarEvents } from "@/hooks/useCalendar";
 import {
@@ -36,7 +37,6 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
   const setDate = useCalendarStore((s) => s.setDate);
   const setViewMode = useCalendarStore((s) => s.setViewMode);
   const selectEvent = useCalendarStore((s) => s.selectEvent);
-  const openEventForm = useCalendarStore((s) => s.openEventForm);
 
   const year = selectedDate.getFullYear();
   const month = selectedDate.getMonth();
@@ -47,6 +47,7 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
   );
   const { data } = useCalendarEvents(range.start, range.end);
   const events = useMemo(() => data?.events ?? [], [data]);
+  const todos = useMemo(() => data?.todos ?? [], [data]);
 
   const fromDate = useMemo(() => range.start.slice(0, 10), [range.start]);
   const toDate = useMemo(() => range.end.slice(0, 10), [range.end]);
@@ -87,16 +88,31 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
     return map;
   }, [events]);
 
+  // Todos with a due date show as chips on their due day. Undated todos are
+  // only listed in the Day view's Tasks section.
+  const todosByDay = useMemo(() => {
+    const map = new Map<string, CalendarEvent[]>();
+    for (const todo of todos) {
+      if (todo.status === "completed" || todo.completed_at || !todo.end_time) continue;
+      const due = new Date(todo.end_time);
+      if (Number.isNaN(due.getTime())) continue;
+      const key = `${due.getFullYear()}-${due.getMonth()}-${due.getDate()}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(todo);
+    }
+    return map;
+  }, [todos]);
+
   const handleDayClick = (day: Date) => {
     setDate(day);
   };
 
-  const handleDayDoubleClick = (day: Date) => {
-    setDate(day);
-    openEventForm();
+  const handleEventClick = (e: React.MouseEvent, eventId: string) => {
+    e.stopPropagation();
+    selectEvent(eventId);
   };
 
-  const handleEventClick = (e: React.MouseEvent, eventId: string) => {
+  const handleTodoClick = (e: React.MouseEvent, eventId: string) => {
     e.stopPropagation();
     selectEvent(eventId);
   };
@@ -109,10 +125,6 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
 
   const [overflowPopover, setOverflowPopover] = useState<EventListPopoverState | null>(null);
   const [contextMenu, setContextMenu] = useState<CalendarContextMenuState | null>(null);
-
-  const handleEventContextMenu = (x: number, y: number, ev: CalendarEvent) => {
-    setContextMenu({ x, y, type: "event", eventId: ev.id, eventTitle: ev.title });
-  };
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
@@ -133,6 +145,7 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
         {days.map((day, idx) => {
           const dayKey = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
           const dayEvents = eventsByDay.get(dayKey) ?? [];
+          const dayTodos = todosByDay.get(dayKey) ?? [];
           const isCurrentMonth = day.getMonth() === month;
           const isSelected = isSameDay(day, selectedDate);
           const isTodayDate = isToday(day);
@@ -141,10 +154,11 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
             <div
               key={idx}
               onClick={() => handleDayClick(day)}
-              onDoubleClick={() => handleDayDoubleClick(day)}
               onContextMenu={(e) => {
                 e.preventDefault();
-                setContextMenu({ x: e.clientX, y: e.clientY, type: "day", date: day });
+                if (FEATURES.stickers) {
+                  setContextMenu({ x: e.clientX, y: e.clientY, type: "day", date: day });
+                }
               }}
               className={cn(
                 "relative min-h-0 cursor-pointer border-b border-r border-border p-1 transition-colors hover:bg-accent/50",
@@ -181,7 +195,6 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
                       key={event.id}
                       event={event}
                       onClick={(e) => handleEventClick(e, event.id)}
-                      onContextMenu={handleEventContextMenu}
                       className={cn(
                         "block w-full truncate rounded px-1 py-0.5 text-left text-[10px] leading-tight",
                         colors.bg,
@@ -214,6 +227,24 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
                     +{dayEvents.length - 3} more
                   </button>
                 )}
+                {/* Read-only task (VTODO) chips */}
+                {dayTodos.slice(0, 2).map((todo) => (
+                  <button
+                    key={todo.id}
+                    type="button"
+                    onClick={(e) => handleTodoClick(e, todo.id)}
+                    className="flex w-full items-center gap-1 truncate rounded px-1 py-0.5 text-left text-[10px] leading-tight text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title={todo.title}
+                  >
+                    <Circle className="size-2.5 shrink-0" />
+                    <span className="truncate">{todo.title}</span>
+                  </button>
+                ))}
+                {dayTodos.length > 2 && (
+                  <div className="text-[10px] text-muted-foreground">
+                    +{dayTodos.length - 2} tasks
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -224,12 +255,10 @@ export function MonthView({ weekStartsOn, timeFormat, stickerCatalog = [] }: Mon
         state={overflowPopover}
         onClose={() => setOverflowPopover(null)}
         timeFormat={timeFormat}
-        onEventContextMenu={handleEventContextMenu}
       />
       <CalendarContextMenu
         state={contextMenu}
         onClose={() => setContextMenu(null)}
-        timeFormat={timeFormat}
         onAddSticker={
           FEATURES.stickers
             ? (date) => { setStickerPickerDate(date); setContextMenu(null); }

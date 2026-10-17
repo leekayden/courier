@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
-import { ChevronLeft, ChevronRight, Plus, Calendar } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCalendarStore } from "@/stores/useCalendarStore";
+import { useUiStore } from "@/stores/useUiStore";
 import {
   formatMonthYear,
   formatDayHeader,
@@ -22,7 +23,8 @@ export function CalendarHeader({ onPrev, onNext, onToday }: CalendarHeaderProps)
   const selectedDate = useCalendarStore((s) => s.selectedDate);
   const viewMode = useCalendarStore((s) => s.viewMode);
   const setViewMode = useCalendarStore((s) => s.setViewMode);
-  const openEventForm = useCalendarStore((s) => s.openEventForm);
+  const setUiViewMode = useUiStore((s) => s.setViewMode);
+  const setPendingSettingsTab = useUiStore((s) => s.setPendingSettingsTab);
   const isMobile = useIsMobile();
 
   const headerText = useMemo(() => {
@@ -36,6 +38,11 @@ export function CalendarHeader({ onPrev, onNext, onToday }: CalendarHeaderProps)
     { label: "Week", short: "W", value: "week" },
     { label: "Day", short: "D", value: "day" },
   ];
+
+  const openCalendarSettings = () => {
+    setPendingSettingsTab("calendar");
+    setUiViewMode("settings");
+  };
 
   return (
     <div className="flex items-center gap-2 border-b border-border px-3 py-2 md:px-4 md:py-3">
@@ -80,10 +87,15 @@ export function CalendarHeader({ onPrev, onNext, onToday }: CalendarHeaderProps)
         ))}
       </div>
 
-      {/* Add event */}
-      <Button size="sm" onClick={() => openEventForm()} className="gap-1.5">
-        <Plus className="size-4" />
-        <span className="hidden sm:inline">Event</span>
+      {/* Manage provider accounts (the calendar itself is read-only) */}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={openCalendarSettings}
+        aria-label="Calendar settings"
+        title="Calendar settings"
+      >
+        <Settings2 className="size-4" />
       </Button>
     </div>
   );
