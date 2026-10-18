@@ -6,8 +6,6 @@ on:
     paths:
       - "backend/**"
       - "frontend/**"
-      - "Dockerfile"
-      - "docker-compose.yml"
       - "scripts/**"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:
@@ -19,10 +17,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     env:
       SERVER: root@cloudservetechcentral.com
-      REMOTE_DIR: /var/www/courier
     steps:
       - uses: actions/checkout@v4
 
@@ -34,26 +31,16 @@ jobs:
           echo "${{ secrets.COURIER_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Sync source to droplet
-        run: |
-          rsync -az --delete --info=stats1 \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='.next' \
-            --exclude='out' \
-            --exclude='target' \
-            --exclude='.env' \
-            --exclude='docker-compose.prod.yml' \
-            ./ "$SERVER:$REMOTE_DIR/"
-
-      - name: Rebuild and restart container on droplet
-        run: ssh "$SERVER" "cd $REMOTE_DIR && docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d && docker image prune -f >/dev/null"
+      - name: Deploy via /opt/courier/deploy.sh (git pull + build + systemd restart)
+        run: ssh "$SERVER" "bash /opt/courier/deploy.sh && tail -5 /tmp/courier-deploy.log"
 
       - name: Verify deployment
         run: |
           for i in 1 2 3 4 5 6; do
             if curl -sf --max-time 15 https://courier.cloudservetechcentral.com/api/health >/dev/null; then
-              echo "PUBLIC_HEALTH_OK"; exit 0
+              echo "PUBLIC_HEALTH_OK"
+              curl -sf --max-time 15 https://mail.cloudservetechcentral.com/api/health >/dev/null && echo "MAIL_HOST_OK"
+              exit 0
             fi
             sleep 10
           done
