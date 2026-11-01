@@ -50,6 +50,7 @@ export default function AdminPage() {
   // auth store is empty - bootstrap the signed-in accounts from the session.
   useEffect(() => {
     if (accounts.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- store already populated; just record it
       setBootstrapped(true);
       return;
     }
