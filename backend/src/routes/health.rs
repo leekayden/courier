@@ -56,7 +56,7 @@ mod tests {
             tls_ca_cert_path: None,
             imap_connect_host: None,
             smtp_connect_host: None,
-            data_dir: "/tmp/rav-test".to_string(),
+            data_dir: "/tmp/courier-test".to_string(),
             session_timeout_hours: 24,
             static_dir: "nonexistent_static_dir".to_string(),
             environment: "development".to_string(),
@@ -91,11 +91,11 @@ mod tests {
         let smtp_client: Arc<dyn crate::smtp::client::SmtpClient> =
             Arc::new(crate::smtp::client::mock::MockSmtpClient::new());
         let search_engine = Arc::new(crate::search::engine::SearchEngine::new(
-            std::path::PathBuf::from("/tmp/rav-test"),
+            std::path::PathBuf::from("/tmp/courier-test"),
         ));
         let event_bus = Arc::new(crate::realtime::events::EventBus::new());
         let db_pool_manager = Arc::new(crate::db::pool::DbPoolManager::new(
-            "/tmp/rav-test".to_string(),
+            "/tmp/courier-test".to_string(),
             4,
             Duration::from_secs(600),
             500,
@@ -131,14 +131,14 @@ mod tests {
             outbox_worker_manager,
             db_pool_manager,
             mfa_crypto: Arc::new(
-                crate::mfa::crypto::MfaCrypto::from_data_dir("/tmp/rav-test-mfa")
+                crate::mfa::crypto::MfaCrypto::from_data_dir("/tmp/courier-test-mfa")
                     .expect("test mfa_crypto"),
             ),
             passkey_service,
             link_proxy_secret: None,
             draft_locks: Arc::new(crate::routes::drafts::DraftLocks::new()),
             calendar_sync: Arc::new(
-                crate::calendar::sync::CalendarSyncManager::new("/tmp/rav-test")
+                crate::calendar::sync::CalendarSyncManager::new("/tmp/courier-test")
                     .expect("test CalendarSyncManager"),
             ),
         });

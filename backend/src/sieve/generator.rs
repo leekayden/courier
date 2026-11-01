@@ -16,7 +16,7 @@ pub fn generate_sieve_script(rules: &[FilterRule]) -> String {
         .collect();
 
     if capable.is_empty() {
-        return "# rav-filters\n".to_string();
+        return "# courier-filters\n".to_string();
     }
 
     let needs_fileinto = capable.iter().any(|r| {

@@ -183,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         host = %config.host,
         port = %config.port,
         static_dir = %config.static_dir,
-        "rav-email server starting"
+        "courier-email server starting"
     );
 
     axum::serve(

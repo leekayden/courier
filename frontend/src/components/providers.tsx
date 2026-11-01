@@ -8,7 +8,7 @@ import { MotionProvider } from "@/lib/motion/MotionProvider";
 import { clearThemeTransitionArtifacts } from "@/lib/motion/theme-spread";
 import { makeQueryClient } from "@/lib/query-client";
 
-const THEME_STORAGE_KEY = "rav-theme";
+const THEME_STORAGE_KEY = "courier-theme";
 
 function ThemeInitializer() {
   useEffect(() => {

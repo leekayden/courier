@@ -1,7 +1,7 @@
 MIT License
 
 Copyright (c) 2024 c0h1b4
-Copyright (c) 2026 the Rav contributors
+Copyright (c) 2026 the Courier contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,7 +25,7 @@ SOFTWARE.
 
 NOTICE
 
-Rav is a fork of oxi (https://github.com/c0h1b4/oxi), originally created by
+Courier is a fork of oxi (https://github.com/c0h1b4/oxi), originally created by
 c0h1b4 and licensed under the MIT License. This project contains substantial
 modifications, including: locking the client to a single configured mail
 server instead of accepting arbitrary user IMAP logins, and adding PGP,

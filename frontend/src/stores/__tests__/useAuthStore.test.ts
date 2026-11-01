@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const ACTIVE_ACCOUNT_STORAGE_KEY = "rav-active-account-id";
+const ACTIVE_ACCOUNT_STORAGE_KEY = "courier-active-account-id";
 
 async function loadFreshStore() {
   vi.resetModules();

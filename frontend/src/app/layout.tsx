@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rav",
+  title: "Courier",
   description: "A modern email client built with Rust and Next.js",
 };
 

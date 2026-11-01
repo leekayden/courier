@@ -33,7 +33,7 @@ function useResolvedTheme() {
   return theme;
 }
 
-const THEME_STORAGE_KEY = "rav-theme";
+const THEME_STORAGE_KEY = "courier-theme";
 
 export function CommandPalette() {
   const open = useUiStore((s) => s.commandPaletteOpen);

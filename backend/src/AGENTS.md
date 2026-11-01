@@ -1,7 +1,7 @@
 # BACKEND KNOWLEDGE BASE
 
 ## OVERVIEW
-Rust Axum backend for Rav (fork of oxi). It manages IMAP/SMTP connections, SQLite caching, and Tantivy search.
+Rust Axum backend for Courier (fork of oxi). It manages IMAP/SMTP connections, SQLite caching, and Tantivy search.
 
 ## STRUCTURE
 ```

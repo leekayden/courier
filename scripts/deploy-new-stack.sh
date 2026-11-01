@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy the new rav/courier stack: extract, env, compose build + up.
+# Deploy the new Courier stack: extract, env, compose build + up.
 # Runs on the droplet as root.
 set -euo pipefail
 cd /var/www/courier
@@ -36,10 +36,10 @@ services:
     env_file:
       - .env
     volumes:
-      - rav-data:/data
+      - courier-data:/data
 
 volumes:
-  rav-data:
+  courier-data:
 EOF
 echo "compose written"
 

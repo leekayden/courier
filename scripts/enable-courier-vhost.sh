@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stage + enable Apache vhosts for courier (new rav stack on 127.0.0.1:3002).
+# Stage + enable Apache vhosts for courier (new stack on 127.0.0.1:3002).
 # Runs on the droplet as root. Only enables sites when /api/health is green.
 set -euo pipefail
 

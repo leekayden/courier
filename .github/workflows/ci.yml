@@ -127,10 +127,10 @@ jobs:
       - name: Package binary, frontend, and checksums
         run: |
           mkdir -p release/static
-          cp backend/target/release/rav-email-server release/
+          cp backend/target/release/courier-email-server release/
           cp -r frontend-out/. release/static/
-          tar -czf rav-email-server-linux-x86_64.tar.gz -C release .
-          sha256sum rav-email-server-linux-x86_64.tar.gz > checksums.txt
+          tar -czf courier-email-server-linux-x86_64.tar.gz -C release .
+          sha256sum courier-email-server-linux-x86_64.tar.gz > checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -138,7 +138,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: |
-            rav-email-server-linux-x86_64.tar.gz
+            courier-email-server-linux-x86_64.tar.gz
             checksums.txt
 
   docker:

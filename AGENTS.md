@@ -11,7 +11,7 @@ Modern webmail client — React/Next.js frontend + Rust/Axum backend. Connects t
 ## STRUCTURE
 
 ```
-rav/
+courier/
 ├── backend/           # Rust Axum API server
 │   ├── src/           # Main crate (routes, db, imap, smtp, auth, search)
 │   └── migrations/    # Refinery SQL migrations

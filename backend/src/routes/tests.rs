@@ -30,7 +30,7 @@
             tls_ca_cert_path: None,
             imap_connect_host: None,
             smtp_connect_host: None,
-            data_dir: "/tmp/rav-test".to_string(),
+            data_dir: "/tmp/courier-test".to_string(),
             session_timeout_hours: 24,
             static_dir: static_dir.to_string(),
             environment: "development".to_string(),
@@ -195,7 +195,7 @@
     /// Helper: create an in-memory MfaCrypto using a fixed test key.
     fn test_mfa_crypto() -> Arc<crate::mfa::crypto::MfaCrypto> {
         Arc::new(
-            crate::mfa::crypto::MfaCrypto::from_data_dir("/tmp/rav-test-mfa")
+            crate::mfa::crypto::MfaCrypto::from_data_dir("/tmp/courier-test-mfa")
                 .expect("test MfaCrypto"),
         )
     }
@@ -213,7 +213,7 @@
             tls_ca_cert_path: None,
             imap_connect_host: None,
             smtp_connect_host: None,
-            data_dir: "/tmp/rav-test".to_string(),
+            data_dir: "/tmp/courier-test".to_string(),
             session_timeout_hours: 24,
             static_dir: "/tmp".to_string(),
             environment: "development".to_string(),
@@ -248,7 +248,7 @@
             tls_ca_cert_path: None,
             imap_connect_host: None,
             smtp_connect_host: None,
-            data_dir: "/tmp/rav-test".to_string(),
+            data_dir: "/tmp/courier-test".to_string(),
             session_timeout_hours: 24,
             static_dir: "/tmp".to_string(),
             environment: "development".to_string(),
@@ -274,7 +274,7 @@
     /// Override individual fields with struct update syntax for custom behaviour.
     fn test_services(static_dir: &str) -> AppServices {
         let db_pool_manager = Arc::new(crate::db::pool::DbPoolManager::new(
-            "/tmp/rav-test".to_string(),
+            "/tmp/courier-test".to_string(),
             4,
             std::time::Duration::from_secs(600),
             500,
@@ -286,14 +286,14 @@
             imap_client: test_imap_client(),
             smtp_client: test_smtp_client(),
             http_client: test_http_client(),
-            search_engine: test_search_engine("/tmp/rav-test"),
+            search_engine: test_search_engine("/tmp/courier-test"),
             event_bus: test_event_bus(),
             idle_manager: test_idle_manager(),
             sync_worker_manager: Arc::new(crate::realtime::worker::SyncWorkerManager::new(
                 test_config(static_dir),
                 test_imap_client(),
                 test_event_bus(),
-                test_search_engine("/tmp/rav-test"),
+                test_search_engine("/tmp/courier-test"),
                 test_smtp_client(),
                 test_transport(),
                 db_pool_manager.clone(),
@@ -312,7 +312,7 @@
             draft_locks: Arc::new(crate::routes::drafts::DraftLocks::new()),
             db_pool_manager,
             calendar_sync: Arc::new(crate::calendar::sync::CalendarSyncManager::new(
-                "/tmp/rav-test",
+                "/tmp/courier-test",
             )
             .expect("test CalendarSyncManager")),
         }
@@ -332,7 +332,7 @@
     /// Helper: build auth headers for multi-account requests.
     fn auth_headers(browser_id: &str, account_id: &str, token: &str) -> Vec<(&'static str, String)> {
         vec![
-            ("cookie", format!("rav_browser={browser_id}; rav_session_{account_id}={token}")),
+            ("cookie", format!("courier_browser={browser_id}; courier_session_{account_id}={token}")),
             ("x-active-account", account_id.to_string()),
         ]
     }
@@ -804,7 +804,7 @@
             .get_all("set-cookie");
         // Should have clearing cookies for both browser and account session
         let cookie_str = format!("{:?}", set_cookie);
-        assert!(cookie_str.contains("rav_browser=;") || cookie_str.contains("Max-Age=0"));
+        assert!(cookie_str.contains("courier_browser=;") || cookie_str.contains("Max-Age=0"));
     }
 
     // -----------------------------------------------------------------------

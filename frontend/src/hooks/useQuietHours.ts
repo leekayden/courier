@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 
-const STORAGE_KEY = "rav-quiet-hours";
+const STORAGE_KEY = "courier-quiet-hours";
 
 /** Quiet hours preference stored in localStorage (no backend needed). */
 export type QuietHoursPrefs = {

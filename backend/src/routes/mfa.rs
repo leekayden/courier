@@ -72,7 +72,7 @@ pub async fn totp_setup(Extension(session): Extension<SessionState>) -> Response
         }
     };
 
-    let url = match totp::get_url(&secret, &session.email, "Rav Mail") {
+    let url = match totp::get_url(&secret, &session.email, "Courier Mail") {
         Ok(u) => u,
         Err(e) => {
             tracing::error!(error = %e, "totp/setup: URL generation failed");
@@ -705,13 +705,13 @@ pub async fn passkey_login_complete(
     let secure = config.environment != "development";
 
     let browser_cookie = format!(
-        "rav_browser={};{} SameSite=Strict; Path=/; Max-Age={}",
+        "courier_browser={};{} SameSite=Strict; Path=/; Max-Age={}",
         browser_id,
         if secure { " Secure;" } else { "" },
         max_age,
     );
     let session_cookie = format!(
-        "rav_session_{}={};{} HttpOnly; SameSite=Strict; Path=/; Max-Age={}",
+        "courier_session_{}={};{} HttpOnly; SameSite=Strict; Path=/; Max-Age={}",
         account_id,
         token,
         if secure { " Secure;" } else { "" },
