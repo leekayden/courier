@@ -53,6 +53,7 @@ export default function AdminPage() {
       setBootstrapped(true);
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- store bootstrap on cold load
     fetchAccounts()
       .then((res) => setAccounts(res.accounts))
       .catch(() => {})
@@ -77,6 +78,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (!isAdmin) return;
     if (sessionStorage.getItem("mailadminAuth") === "1") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- state updates land after the fetch resolves
       load();
     } else {
       setAuthed(false);
