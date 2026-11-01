@@ -1,4 +1,8 @@
 #![forbid(clippy::too_many_arguments)]
+// async_trait decorates every generated future with a bare #[must_use], which
+// newer clippy flags as redundant when it wraps an already-must_use type like
+// Result. Known macro false positive: rust-clippy#17547.
+#![allow(clippy::double_must_use)]
 
 mod calendar;
 mod config;
